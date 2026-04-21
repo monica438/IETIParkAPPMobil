@@ -680,15 +680,17 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
 
         final float verticalThreshold = 5f;
         final float moveThreshold = 2f;
-        String animationName = "Foxy Idle";
+        String animationName;
+
         if (!onGround) {
-            if (velocityY < -verticalThreshold) {
-                animationName = "Foxy Jump Up";
-            } else {
-                animationName = "Foxy Jump Fall";
-            }
+            // Saltando o cayendo
+            animationName = "jump_cat"; // Usará jump_cat1, jump_cat2, etc.
         } else if (Math.abs(velocityX) > moveThreshold) {
-            animationName = "Foxy Walk";
+            // Caminando
+            animationName = "run_cat"; // Usará run_cat1, run_cat2, etc.
+        } else {
+            // Quieto
+            animationName = "idle_cat"; // Usará idle_cat1, idle_cat2, etc.
         }
 
         setPlayerFlip(!facingRight, false);

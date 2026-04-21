@@ -173,7 +173,7 @@ public class PlayScreen extends ScreenAdapter {
             layerRuntimeStates
         );
         // Renderizar otros jugadores
-        renderRemotePlayers(batch);
+        //renderRemotePlayers(batch); // COMENTADO PARA QUE NO SALGAN LOS NOMBRES
         batch.end();
 
         debugOverlay.render(levelData, camera, false, false, zoneRuntimeStates);
@@ -763,46 +763,25 @@ public class PlayScreen extends ScreenAdapter {
     }
 
     private void applyInitialCamera() {
+        // Centrar la cámara en el viewport definido (no en el mundo completo)
         float cx = levelData.viewportX + levelData.viewportWidth * 0.5f;
-        float cy = levelData.worldHeight - (levelData.viewportY + levelData.viewportHeight * 0.5f);
-        camera.position.set(cx, cy, 0f);
+        float cy = levelData.viewportY + levelData.viewportHeight * 0.5f;
+
+        // Convertir Y de coordenadas del mundo (Y hacia abajo) a coordenadas de cámara (Y hacia arriba)
+        float cameraY = levelData.worldHeight - cy;
+
+        camera.position.set(cx, cameraY, 0f);
+        camera.zoom = 1f; // Zoom normal
         camera.update();
     }
 
     private void updateCamera() {
-        if (!gameplayController.hasCameraTarget()) {
-            camera.update();
-            return;
-        }
+        // Cámara FIJA en la posición del viewport
+        float cx = levelData.viewportX + levelData.viewportWidth * 0.5f;
+        float cy = levelData.viewportY + levelData.viewportHeight * 0.5f;
+        float cameraY = levelData.worldHeight - cy;
 
-        float wW = Math.max(1f, levelData.worldWidth);
-        float wH = Math.max(1f, levelData.worldHeight);
-        float vW = Math.max(1f, viewport.getWorldWidth());
-        float vH = Math.max(1f, viewport.getWorldHeight());
-        float hW = vW * 0.5f, hH = vH * 0.5f;
-
-        float pX = gameplayController.getCameraTargetX();
-        float pYd = gameplayController.getCameraTargetY();
-        float cX = camera.position.x;
-        float cYd = wH - camera.position.y;
-
-        float dzHW = vW * CAMERA_DEAD_ZONE_FRACTION_X * 0.5f;
-        float dzHH = vH * CAMERA_DEAD_ZONE_FRACTION_Y * 0.5f;
-
-        float tX = cX, tYd = cYd;
-        if (pX < cX - dzHW) tX = pX + dzHW;
-        else if (pX > cX + dzHW) tX = pX - dzHW;
-        if (pYd < cYd - dzHH) tYd = pYd + dzHH;
-        else if (pYd > cYd + dzHH) tYd = pYd - dzHH;
-
-        tX = MathUtils.clamp(tX, Math.min(hW, wW - hW), Math.max(hW, wW - hW));
-        tYd = MathUtils.clamp(tYd, Math.min(hH, wH - hH), Math.max(hH, wH - hH));
-
-        float dt = Math.max(0f, Math.min(MAX_FRAME_SECONDS, Gdx.graphics.getDeltaTime()));
-        float alpha = 1f - (float) Math.exp(-CAMERA_FOLLOW_SMOOTHNESS * dt);
-        float newX = MathUtils.lerp(cX, tX, alpha);
-        float newYd = MathUtils.lerp(cYd, tYd, alpha);
-        camera.position.set(newX, wH - newYd, 0f);
+        camera.position.set(cx, cameraY, 0f);
         camera.update();
     }
 
@@ -840,14 +819,17 @@ public class PlayScreen extends ScreenAdapter {
     }
 
     private static Viewport createViewport(LevelData d, OrthographicCamera cam) {
-        switch (d.viewportAdaptation) {
-            case "expand":
-                return new ExtendViewport(d.viewportWidth, d.viewportHeight, cam);
-            case "stretch":
-                return new StretchViewport(d.viewportWidth, d.viewportHeight, cam);
-            default:
-                return new FitViewport(d.viewportWidth, d.viewportHeight, cam);
-        }
+        // Usar el viewport DEFINIDO en game_data.json (tamaño lógico de pantalla)
+        // NO el worldWidth/worldHeight (que es el tamaño total del nivel)
+        float viewportWidth = d.viewportWidth;
+        float viewportHeight = d.viewportHeight;
+
+        if (viewportWidth <= 0) viewportWidth = 1280;
+        if (viewportHeight <= 0) viewportHeight = 720;
+
+        Gdx.app.log("PlayScreen", "Viewport lógico: " + viewportWidth + "x" + viewportHeight);
+
+        return new FitViewport(viewportWidth, viewportHeight, cam);
     }
 
     private static boolean[] buildInitialLayerVisibility(LevelData d) {

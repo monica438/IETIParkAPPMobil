@@ -409,8 +409,8 @@ public abstract class GameplayControllerBase implements GameplayController {
             LevelData.LevelSprite sprite = levelData.sprites.get(i);
             String type = normalize(sprite.type);
             String name = normalize(sprite.name);
-            if (containsAny(type, "player", "hero", "heroi", "foxy")
-                || containsAny(name, "player", "hero", "heroi", "foxy")) {
+            if (containsAny(type, "cat")
+                || containsAny(name, "cat")) {
                 return i;
             }
         }

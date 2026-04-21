@@ -274,47 +274,21 @@ public final class GameplayControllerTopDown extends GameplayControllerBase {
             return;
         }
 
-        String prefix = moving ? "Heroi Camina " : "Heroi Aturat ";
-        String suffix;
-        boolean flipX;
-        switch (direction) {
-            case UP_LEFT:
-                suffix = "Amunt-Dreta";
-                flipX = true;
-                break;
-            case UP:
-                suffix = "Amunt";
-                flipX = false;
-                break;
-            case UP_RIGHT:
-                suffix = "Amunt-Dreta";
-                flipX = false;
-                break;
-            case LEFT:
-                suffix = "Dreta";
-                flipX = true;
-                break;
-            case RIGHT:
-                suffix = "Dreta";
-                flipX = false;
-                break;
-            case DOWN_LEFT:
-                suffix = "Avall-Dreta";
-                flipX = true;
-                break;
-            case DOWN_RIGHT:
-                suffix = "Avall-Dreta";
-                flipX = false;
-                break;
-            case DOWN:
-            default:
-                suffix = "Avall";
-                flipX = false;
-                break;
+        String animationName;
+
+        if (moving) {
+            animationName = "run_cat";
+        } else {
+            animationName = "idle_cat";
         }
 
+        // El flip se maneja según la dirección
+        boolean flipX = (direction == Direction.LEFT ||
+            direction == Direction.UP_LEFT ||
+            direction == Direction.DOWN_LEFT);
+
         setPlayerFlip(flipX, false);
-        setPlayerAnimationOverrideByName(prefix + suffix);
+        setPlayerAnimationOverrideByName(animationName);
     }
 
     private enum Direction {
