@@ -386,25 +386,19 @@ public class PlayScreen extends ScreenAdapter {
             remotePlayers.remove(nick);
         }
 
-        // Assign available cat sprites to new players
-        // Assign available cat sprites to new players
+        // Assign available cat sprites to new players SEQUENTIALLY
+        int nextCatIndex = 0;
         for (ObjectMap.Entry<String, RemotePlayer> entry : remotePlayers.entries()) {
             if (!playerToCatSprite.containsKey(entry.key)) {
-                for (int i = 0; i < catSpriteIndices.size; i++) {
-                    int catIdx = catSpriteIndices.get(i);
-                    boolean assigned = false;
-                    for (ObjectMap.Entry<String, Integer> mapping : playerToCatSprite.entries()) {
-                        if (mapping.value == catIdx) {
-                            assigned = true;
-                            break;
-                        }
-                    }
-                    if (!assigned) {
-                        playerToCatSprite.put(entry.key, catIdx);
-                        syncSpriteToPlayer(entry.key, entry.value); // ← AÑADIR ESTO
-                        break;
-                    }
+                // Assign next available cat in sequence
+                if (nextCatIndex < catSpriteIndices.size) {
+                    int catIdx = catSpriteIndices.get(nextCatIndex);
+                    playerToCatSprite.put(entry.key, catIdx);
+                    syncSpriteToPlayer(entry.key, entry.value);
+                    nextCatIndex++;
                 }
+            } else {
+                nextCatIndex++;  // Skip already-assigned cats
             }
         }
 
@@ -623,22 +617,20 @@ public class PlayScreen extends ScreenAdapter {
 
             if (name.contains("cat") || type.contains("cat")) {
                 if (localPlayerCatIndex == -1) {
-                    // Este es el sprite que usa GameplayController — NO tocar
+                    // Primer gato = jugador local
                     localPlayerCatIndex = i;
-                    // No modificamos visible aquí, el controller lo gestiona
                 } else {
-                    // Pool para jugadores remotos
+                    // Resto de gatos = pool para remotos
                     catSpriteIndices.add(i);
-                    // Ocultar solo los remotos al inicio
-                    if (i < spriteRuntimeStates.size) {
-                        spriteRuntimeStates.get(i).visible = false;
-                    }
+                }
+                // Mostrar TODOS los gatos al inicio
+                if (i < spriteRuntimeStates.size) {
+                    spriteRuntimeStates.get(i).visible = true;
                 }
             }
         }
 
-        Gdx.app.log("CATS", "localPlayerCatIndex=" + localPlayerCatIndex 
-            + " remotePool=" + catSpriteIndices.toString());
+        Gdx.app.log("CATS", "localPlayerCatIndex=" + localPlayerCatIndex + " remoteCats=" + catSpriteIndices.size);
     }
 
     private void createRemotePlayerTexture() {
@@ -672,9 +664,26 @@ public class PlayScreen extends ScreenAdapter {
             snapshotPreviousZones();
             advancePathBindings(FIXED_STEP_SECONDS);
             gameplayController.fixedUpdate(FIXED_STEP_SECONDS);
+            
+            // Sincronizar gato del jugador local con su posición
+            syncLocalPlayerCatSprite();
+            
             updateAnimations(FIXED_STEP_SECONDS);
             fixedStepAccumulator -= FIXED_STEP_SECONDS;
         }
+    }
+    
+    private void syncLocalPlayerCatSprite() {
+        if (localPlayerCatIndex < 0 || localPlayerCatIndex >= spriteRuntimeStates.size) return;
+        if (!gameplayController.hasCameraTarget()) return;
+        
+        float playerX = gameplayController.getCameraTargetX();
+        float playerYd = gameplayController.getCameraTargetY();
+        
+        LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(localPlayerCatIndex);
+        rs.worldX = playerX;
+        rs.worldY = playerYd;
+        rs.visible = true;
     }
 
     // ==================== MÉTODOS HEREDADOS (sin cambios) ====================
