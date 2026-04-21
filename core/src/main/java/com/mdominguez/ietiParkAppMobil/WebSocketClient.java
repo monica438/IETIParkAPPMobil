@@ -1,5 +1,8 @@
 package com.mdominguez.ietiParkAppMobil;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.utils.JsonReader;
 import com.badlogic.gdx.utils.JsonValue;
@@ -7,10 +10,6 @@ import com.github.czyzby.websocket.WebSocket;
 import com.github.czyzby.websocket.WebSocketAdapter;
 import com.github.czyzby.websocket.WebSocketHandler;
 import com.github.czyzby.websocket.WebSockets;
-import com.github.czyzby.websocket.data.WebSocketCloseCode;
-
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Cliente → Servidor:
@@ -50,6 +49,8 @@ public class WebSocketClient {
     private String confirmedNickname = null;
     private final List<String> activePlayers = new ArrayList<>();
     private final JsonReader jsonReader = new JsonReader();
+    // Queue of outbound messages when disconnected
+    private final java.util.Queue<String> pendingMessages = new java.util.ArrayDeque<>();
 
     private PlayerListListener playerListListener;
     private MessageListener messageListener;
@@ -77,6 +78,17 @@ public class WebSocketClient {
             public boolean onOpen(WebSocket webSocket) {
                 connected = true;
                 Gdx.app.log("WebSocketClient", "Conectado al servidor");
+                // Flush any pending outbound messages
+                try {
+                    while (!pendingMessages.isEmpty()) {
+                        String m = pendingMessages.poll();
+                        if (m == null) break;
+                        webSocket.send(m);
+                        Gdx.app.log("WebSocketClient", "Enviado (pendiente): " + m);
+                    }
+                } catch (Exception e) {
+                    Gdx.app.error("WebSocketClient", "Error al enviar mensajes pendientes", e);
+                }
                 return WebSocketHandler.FULLY_HANDLED;
             }
 
@@ -199,11 +211,23 @@ public class WebSocketClient {
     }
 
     private void send(String message) {
-        if (connected && socket != null) {
-            socket.send(message);
-            Gdx.app.log("WebSocketClient", "Enviado: " + message);
+        if (socket != null && connected) {
+            try {
+                socket.send(message);
+                Gdx.app.log("WebSocketClient", "Enviado: " + message);
+            } catch (Exception e) {
+                Gdx.app.error("WebSocketClient", "Error enviando mensaje, encolando: " + message, e);
+                pendingMessages.add(message);
+            }
         } else {
-            Gdx.app.log("WebSocketClient", "Sin conexión, mensaje descartado: " + message);
+            // Queue and attempt to connect
+            pendingMessages.add(message);
+            Gdx.app.log("WebSocketClient", "Sin conexión, encolado: " + message);
+            try {
+                connect();
+            } catch (Exception e) {
+                Gdx.app.error("WebSocketClient", "Error intentando conectar", e);
+            }
         }
     }
 

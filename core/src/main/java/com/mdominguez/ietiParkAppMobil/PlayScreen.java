@@ -1,5 +1,6 @@
 package com.mdominguez.ietiParkAppMobil;
 
+import com.badlogic.gdx.Application;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.ScreenAdapter;
@@ -102,6 +103,10 @@ public class PlayScreen extends ScreenAdapter {
     private final String myNickname;
     private static final float REMOTE_PLAYER_WIDTH = 32f;
     private static final float REMOTE_PLAYER_HEIGHT = 32f;
+    
+    // Cat sprite mapping
+    private IntArray catSpriteIndices = new IntArray();
+    private ObjectMap<String, Integer> playerToCatSprite = new ObjectMap<>();
 
     // Listener para WebSocket
     private WebSocketClient.MessageListener wsMessageListener;
@@ -119,6 +124,7 @@ public class PlayScreen extends ScreenAdapter {
         initAnimationState();
         initTransformState();
         initPathBindings();
+        discoverCatSprites();
         this.gameplayController = createController();
         hudViewport.update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), true);
         loadHudAssets();
@@ -338,6 +344,7 @@ public class PlayScreen extends ScreenAdapter {
             rp.tempFlag = false;
         }
 
+        // First pass: mark existing players as present
         for (JsonValue item = playersArray.child; item != null; item = item.next) {
             String nickname = item.asString();
             if (nickname.equals(myNickname)) continue;
@@ -350,14 +357,37 @@ public class PlayScreen extends ScreenAdapter {
             rp.tempFlag = true;
         }
 
+        // Remove disconnected players and free their assigned sprites
         Array<String> toRemove = new Array<>();
         for (ObjectMap.Entry<String, RemotePlayer> entry : remotePlayers.entries()) {
             if (!entry.value.tempFlag) {
+                Integer spriteIdx = playerToCatSprite.remove(entry.key);
                 toRemove.add(entry.key);
             }
         }
         for (String nick : toRemove) {
             remotePlayers.remove(nick);
+        }
+
+        // Assign available cat sprites to new players
+        for (ObjectMap.Entry<String, RemotePlayer> entry : remotePlayers.entries()) {
+            if (!playerToCatSprite.containsKey(entry.key)) {
+                // Find first unassigned cat sprite
+                for (int i = 0; i < catSpriteIndices.size; i++) {
+                    int catIdx = catSpriteIndices.get(i);
+                    boolean assigned = false;
+                    for (ObjectMap.Entry<String, Integer> mapping : playerToCatSprite.entries()) {
+                        if (mapping.value == catIdx) {
+                            assigned = true;
+                            break;
+                        }
+                    }
+                    if (!assigned) {
+                        playerToCatSprite.put(entry.key, catIdx);
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -384,6 +414,15 @@ public class PlayScreen extends ScreenAdapter {
         }
 
         rp.x = MathUtils.clamp(rp.x, 0, levelData.worldWidth - REMOTE_PLAYER_WIDTH);
+        
+        // Update assigned sprite position if available
+        Integer spriteIdx = playerToCatSprite.get(nickname);
+        if (spriteIdx != null && spriteIdx >= 0 && spriteIdx < spriteRuntimeStates.size) {
+            LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(spriteIdx);
+            rs.worldX = rp.x;
+            rs.worldY = rp.y;
+            rs.flipX = rp.flipX;
+        }
     }
 
     private void addRemotePlayer(String nickname) {
@@ -395,28 +434,42 @@ public class PlayScreen extends ScreenAdapter {
     // ==================== RENDERIZADO ====================
 
     private void renderRemotePlayers(SpriteBatch batch) {
-        for (RemotePlayer rp : remotePlayers.values()) {
-            float drawX = rp.x;
-            float drawY = levelData.worldHeight - rp.y - REMOTE_PLAYER_HEIGHT;
-
-            boolean flip = rp.flipX;
-            // Versión para Texture (sin región)
-            batch.draw(remotePlayerTexture,
-                drawX, drawY,
-                REMOTE_PLAYER_WIDTH / 2, REMOTE_PLAYER_HEIGHT / 2,
-                REMOTE_PLAYER_WIDTH, REMOTE_PLAYER_HEIGHT,
-                flip ? -1f : 1f, 1f, 0f,
-                0, 0,
-                (int)REMOTE_PLAYER_WIDTH, (int)REMOTE_PLAYER_HEIGHT,
-                flip, false);
-
+        // Hide unassigned cat sprites
+        for (int i = 0; i < catSpriteIndices.size; i++) {
+            int catIdx = catSpriteIndices.get(i);
+            boolean assigned = false;
+            for (ObjectMap.Entry<String, Integer> entry : playerToCatSprite.entries()) {
+                if (entry.value == catIdx) {
+                    assigned = true;
+                    break;
+                }
+            }
+            if (catIdx >= 0 && catIdx < spriteRuntimeStates.size) {
+                spriteRuntimeStates.get(catIdx).visible = assigned;
+            }
+        }
+        
+        // Render nicknames over assigned cat sprites
+        for (ObjectMap.Entry<String, Integer> entry : playerToCatSprite.entries()) {
+            String nickname = entry.key;
+            Integer spriteIdx = entry.value;
+            
+            if (spriteIdx == null || spriteIdx < 0 || spriteIdx >= spriteRuntimeStates.size) {
+                continue;
+            }
+            
+            LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(spriteIdx);
+            float drawX = rs.worldX;
+            float drawY = levelData.worldHeight - rs.worldY - rs.frameHeight;
+            
+            // Draw nickname above sprite
             BitmapFont font = game.getFont();
             font.setColor(Color.WHITE);
             font.getData().setScale(0.6f);
-            GlyphLayout layout = new GlyphLayout(font, rp.nickname);
+            GlyphLayout layout = new GlyphLayout(font, nickname);
             font.draw(batch, layout,
-                rp.x + REMOTE_PLAYER_WIDTH / 2 - layout.width / 2,
-                drawY + REMOTE_PLAYER_HEIGHT + 15);
+                drawX + rs.frameWidth / 2 - layout.width / 2,
+                drawY + rs.frameHeight + 15);
             font.getData().setScale(1f);
         }
     }
@@ -511,6 +564,25 @@ public class PlayScreen extends ScreenAdapter {
         float hudH = hudViewport.getWorldHeight();
         backButtonBounds.set(HUD_MARGIN, hudH - HUD_MARGIN - HUD_BUTTON_HEIGHT,
             160f, HUD_BUTTON_HEIGHT);
+    }
+
+    private void discoverCatSprites() {
+        catSpriteIndices.clear();
+        playerToCatSprite.clear();
+        
+        for (int i = 0; i < levelData.sprites.size; i++) {
+            LevelData.LevelSprite sprite = levelData.sprites.get(i);
+            String type = normalize(sprite.type);
+            String name = normalize(sprite.name);
+            
+            if (name.contains("cat") || type.contains("cat")) {
+                catSpriteIndices.add(i);
+                // Initially hide unassigned cats
+                if (i < spriteRuntimeStates.size) {
+                    spriteRuntimeStates.get(i).visible = false;
+                }
+            }
+        }
     }
 
     private void createRemotePlayerTexture() {
@@ -846,6 +918,10 @@ public class PlayScreen extends ScreenAdapter {
             case "stretch":
                 return new StretchViewport(d.viewportWidth, d.viewportHeight, cam);
             default:
+                // On Android prefer an expanding viewport to avoid letterbox black areas
+                if (Gdx.app != null && Gdx.app.getType() == Application.ApplicationType.Android) {
+                    return new ExtendViewport(d.viewportWidth, d.viewportHeight, cam);
+                }
                 return new FitViewport(d.viewportWidth, d.viewportHeight, cam);
         }
     }

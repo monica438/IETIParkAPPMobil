@@ -28,6 +28,8 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
     private final IntArray deathZoneIndices = new IntArray();
     private final IntArray gemSpriteIndices;
     private final IntArray dragonSpriteIndices;
+    private final IntArray potionSpriteIndices;
+    private final IntSet collectedPotionSpriteIndices = new IntSet();
     private final IntFloatMap dragonDeathStartSecondsBySprite = new IntFloatMap();
     private final IntArray completedDragonDeathSpriteIndices = new IntArray();
     private final IntSet collectedGemSpriteIndices = new IntSet();
@@ -62,6 +64,7 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         classifyZones();
         gemSpriteIndices = findSpriteIndicesByTypeOrName("gem");
         dragonSpriteIndices = findSpriteIndicesByTypeOrName("dragon");
+        potionSpriteIndices = findSpriteIndicesByTypeOrName("potion", "red_potion");
         dragonDeathDurationSeconds = resolveDragonDeathDurationSeconds();
         onGround = isStandingOnFloor();
         updatePlayerAnimationSelection();
@@ -164,6 +167,7 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         }
 
         collectTouchedGems();
+        collectTouchedPotions();
         handleDragonInteractions();
         if (!gameOver && isTouchingDeathZone()) {
             triggerGameOver();
@@ -405,6 +409,33 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         }
     }
 
+    private void collectTouchedPotions() {
+        if (potionSpriteIndices == null || potionSpriteIndices.size <= 0) {
+            return;
+        }
+
+        for (int i = 0; i < potionSpriteIndices.size; i++) {
+            int spriteIndex = potionSpriteIndices.get(i);
+            if (collectedPotionSpriteIndices.contains(spriteIndex)) continue;
+            if (spriteIndex < 0 || spriteIndex >= spriteRuntimeStates.size) continue;
+            LevelRenderer.SpriteRuntimeState runtime = spriteRuntimeStates.get(spriteIndex);
+            if (!runtime.visible) continue;
+            if (spritesOverlapByHitBoxes(
+                playerSpriteIndex,
+                playerX,
+                playerY,
+                spriteIndex,
+                runtime.worldX,
+                runtime.worldY
+            )) {
+                collectedPotionSpriteIndices.add(spriteIndex);
+                setSpriteVisible(spriteIndex, false);
+                // Simple effect: restore some life
+                lifePercent = Math.min(START_LIFE_PERCENT, lifePercent + 20f);
+            }
+        }
+    }
+
     private void handleDragonInteractions() {
         if (gameOver || dragonSpriteIndices.size <= 0) {
             return;
@@ -578,11 +609,13 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         nextDragonDamageSecondsBySprite.clear();
         expiredDragonDamageSpriteIndices.clear();
         collectedGemSpriteIndices.clear();
+        collectedPotionSpriteIndices.clear();
         removedDragonSpriteIndices.clear();
         dragonDeathStartSecondsBySprite.clear();
         completedDragonDeathSpriteIndices.clear();
         restoreSpritesVisible(gemSpriteIndices);
         restoreSpritesVisible(dragonSpriteIndices);
+        if (potionSpriteIndices != null) restoreSpritesVisible(potionSpriteIndices);
         clearAnimationOverrides(dragonSpriteIndices);
         setPlayerFlip(false, false);
         updatePlayerAnimationSelection();
@@ -680,15 +713,32 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
 
         final float verticalThreshold = 5f;
         final float moveThreshold = 2f;
-        String animationName = "Foxy Idle";
-        if (!onGround) {
-            if (velocityY < -verticalThreshold) {
-                animationName = "Foxy Jump Up";
+        // Try to use cat-specific animation sets if the player sprite is a cat (e.g. "cat1")
+        String base = normalize(playerSprite().name);
+        if (base == null || base.isEmpty()) base = normalize(playerSprite().type);
+
+        String animationName = null;
+        if (base != null && base.startsWith("cat")) {
+            // expected animation names in animations.json: idle_cat1, run_cat1, jump_cat1
+            if (!onGround) {
+                animationName = "jump_" + base;
+            } else if (Math.abs(velocityX) > moveThreshold) {
+                animationName = "run_" + base;
             } else {
-                animationName = "Foxy Jump Fall";
+                animationName = "idle_" + base;
             }
-        } else if (Math.abs(velocityX) > moveThreshold) {
-            animationName = "Foxy Walk";
+        } else {
+            // Fallback to previous behavior (named Foxy animations)
+            animationName = "Foxy Idle";
+            if (!onGround) {
+                if (velocityY < -verticalThreshold) {
+                    animationName = "Foxy Jump Up";
+                } else {
+                    animationName = "Foxy Jump Fall";
+                }
+            } else if (Math.abs(velocityX) > moveThreshold) {
+                animationName = "Foxy Walk";
+            }
         }
 
         setPlayerFlip(!facingRight, false);

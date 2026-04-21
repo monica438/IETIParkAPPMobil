@@ -405,6 +405,17 @@ public abstract class GameplayControllerBase implements GameplayController {
     }
 
     private int findPlayerSpriteIndex() {
+        // Prefer explicit cat sprites (cat, kitty, gato) first
+        for (int i = 0; i < levelData.sprites.size; i++) {
+            LevelData.LevelSprite sprite = levelData.sprites.get(i);
+            String type = normalize(sprite.type);
+            String name = normalize(sprite.name);
+            if (containsAny(type, "cat", "kitty", "gato") || containsAny(name, "cat", "kitty", "gato")) {
+                return i;
+            }
+        }
+
+        // Fallback to traditional player/hero tokens
         for (int i = 0; i < levelData.sprites.size; i++) {
             LevelData.LevelSprite sprite = levelData.sprites.get(i);
             String type = normalize(sprite.type);
@@ -414,7 +425,9 @@ public abstract class GameplayControllerBase implements GameplayController {
                 return i;
             }
         }
-        return levelData.sprites.size > 0 ? 0 : -1;
+
+        // Avoid implicitly choosing the first sprite (often a shop). If none found, return -1.
+        return -1;
     }
 
     private void setFullSpriteRect(
