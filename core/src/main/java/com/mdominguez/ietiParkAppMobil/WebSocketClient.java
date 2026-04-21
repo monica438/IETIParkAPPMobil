@@ -64,7 +64,7 @@ public class WebSocketClient {
             }
 
             @Override
-            public boolean onClose(WebSocket webSocket, WebSocketCloseCode code, String reason) {
+            public boolean onClose(WebSocket webSocket, int code, String reason) {
                 connected = false;
                 Gdx.app.log("WebSocketClient", "Desconectado: " + reason);
                 return WebSocketHandler.FULLY_HANDLED;
