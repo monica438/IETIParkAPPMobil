@@ -1,6 +1,5 @@
 package com.mdominguez.ietiParkAppMobil;
 
-
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.utils.JsonReader;
 import com.badlogic.gdx.utils.JsonValue;
@@ -26,29 +25,47 @@ import java.util.List;
  *   { "type": "MOVE",        "nickname": "xxx", "direction": "UP", ... }
  */
 public class WebSocketClient {
-    private WebSocket socket; // Hacer instalación de websocket en el gradle
-    private boolean connected = false;
 
-    // Nick confirmado por el servidor tras el JOIN_OK
-    private String confirmedNickname = null;
+    // ==================== INTERFACES ====================
 
-    // Lista de jugadores activos recibida del servidor
-    private final List<String> activePlayers = new ArrayList<>();
-
-    // Parser JSON de LibGDX
-    private final JsonReader jsonReader = new JsonReader();
-
-    // listener para notificar a las pantallas
+    /**
+     * Listener para notificar cambios en la lista de jugadores.
+     */
     public interface PlayerListListener {
         void onPlayerListUpdated(List<String> players);
     }
+
+    /**
+     * Listener genérico para mensajes del servidor.
+     * Permite que cualquier pantalla reciba mensajes WebSocket.
+     */
+    public interface MessageListener {
+        void onMessage(String type, JsonValue payload);
+    }
+
+    // ==================== CAMPOS ====================
+
+    private WebSocket socket;
+    private boolean connected = false;
+    private String confirmedNickname = null;
+    private final List<String> activePlayers = new ArrayList<>();
+    private final JsonReader jsonReader = new JsonReader();
+
     private PlayerListListener playerListListener;
+    private MessageListener messageListener;
+
+    // ==================== LISTENERS ====================
 
     public void setPlayerListListener(PlayerListListener listener) {
         this.playerListListener = listener;
     }
 
-    // conexión
+    // Setter para el listener de mensajes
+    public void setMessageListener(MessageListener listener) {
+        this.messageListener = listener;
+    }
+
+    // ==================== CONEXIÓN ====================
 
     public void connect() {
         socket = WebSockets.newSocket("wss://pico2.ieti.site");
@@ -87,7 +104,7 @@ public class WebSocketClient {
         socket.connect();
     }
 
-    // manejo de mensajes entrantes
+    // ==================== MANEJO DE MENSAJES ====================
 
     private void handleMessage(String payload) {
         JsonValue root;
@@ -101,21 +118,18 @@ public class WebSocketClient {
         String type = root.getString("type", "");
 
         switch (type) {
-
             case "WELCOME":
                 Gdx.app.log("WebSocketClient", "Bienvenida: " + root.getString("msg", ""));
                 break;
 
             case "JOIN_OK":
-                // El servidor confirma el nick definitivo (puede diferir del
-                // enviado si había duplicado, el servidor añade sufijo numérico)
                 confirmedNickname = root.getString("nickname", "");
                 Gdx.app.log("WebSocketClient", "JOIN confirmado como: " + confirmedNickname);
+                // Notificar al listener genérico
+                notifyMessageListener(type, root);
                 break;
 
             case "PLAYER_LIST":
-                // "players" es un array JSON: ["nick1", "nick2", ...]
-                // JsonValue.child apunta al primer elemento; .next itera el resto
                 JsonValue playersArray = root.get("players");
                 activePlayers.clear();
                 if (playersArray != null) {
@@ -125,14 +139,16 @@ public class WebSocketClient {
                 }
                 Gdx.app.log("WebSocketClient", "Lista actualizada: " + activePlayers);
                 notifyPlayerList();
+                // También notificar al listener genérico
+                notifyMessageListener(type, root);
                 break;
 
             case "MOVE":
-                // Movimiento de otro jugador recibido desde el servidor
-                // Por ahora solo log; aquí iría actualizar posición en GameScreen
-                String nick      = root.getString("nickname",  "?");
+                String nick = root.getString("nickname", "?");
                 String direction = root.getString("direction", "?");
                 Gdx.app.log("WebSocketClient", "MOVE de " + nick + ": " + direction);
+                // Notificar al listener genérico
+                notifyMessageListener(type, root);
                 break;
 
             default:
@@ -141,29 +157,43 @@ public class WebSocketClient {
         }
     }
 
-    // Notifica al listener en el hilo de render de LibGDX.
+    // ==================== NOTIFICACIONES ====================
+
     private void notifyPlayerList() {
         if (playerListListener == null) return;
         final List<String> snapshot = new ArrayList<>(activePlayers);
         Gdx.app.postRunnable(() -> playerListListener.onPlayerListUpdated(snapshot));
     }
 
-    // mensajes salientes
-
-    // Envía JOIN con el nickname del jugador.
-    public void sendJoin(String nickname) {
-        send("{\"type\":\"JOIN\",\"nickname\":\"" + nickname + "\"}");
+    // Función para notificar al listener genérico
+    private void notifyMessageListener(String type, JsonValue payload) {
+        if (messageListener == null) return;
+        // Creamos una copia del payload para evitar problemas de threading
+        final String typeCopy = type;
+        final String payloadCopy = payload.toString();
+        Gdx.app.postRunnable(() -> {
+            try {
+                JsonValue parsed = new JsonReader().parse(payloadCopy);
+                messageListener.onMessage(typeCopy, parsed);
+            } catch (Exception e) {
+                Gdx.app.error("WebSocketClient", "Error notificando mensaje", e);
+            }
+        });
     }
 
-    // Envía un movimiento. direction debe ser UP, LEFT o RIGHT.
+    // ==================== MENSAJES SALIENTES ====================
+
+    public void sendJoin(String nickname) {
+        send("{\"type\":\"JOIN\",\"nickname\":\"" + escapeJson(nickname) + "\"}");
+    }
+
     public void sendMove(String direction) {
         long timestamp = System.currentTimeMillis();
         send("{\"type\":\"MOVE\","
-            + "\"direction\":\"" + direction + "\","
-            + "\"timestamp\":" + timestamp + "}");
+                + "\"direction\":\"" + direction + "\","
+                + "\"timestamp\":" + timestamp + "}");
     }
 
-    // Solicita al servidor la lista de jugadores activa.
     public void sendGetPlayers() {
         send("{\"type\":\"GET_PLAYERS\"}");
     }
@@ -177,27 +207,36 @@ public class WebSocketClient {
         }
     }
 
-    // getters
+    // Escapar strings para JSON
+    private String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
+
+    // ==================== GETTERS ====================
 
     public boolean isConnected() {
         return connected;
     }
 
-    // Nick confirmado por el servidor. Null hasta recibir JOIN_OK.
     public String getConfirmedNickname() {
         return confirmedNickname;
     }
 
-    // Devuelve una copia de la lista para evitar modificaciones externas.
     public List<String> getActivePlayers() {
         return new ArrayList<>(activePlayers);
     }
 
-    // cierre
+    // ==================== CIERRE ====================
 
     public void close() {
         if (socket != null) {
             WebSockets.closeGracefully(socket);
         }
+        connected = false;
     }
 }

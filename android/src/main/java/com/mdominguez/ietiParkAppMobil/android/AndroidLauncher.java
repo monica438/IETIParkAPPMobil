@@ -6,8 +6,7 @@ import android.os.Bundle;
 
 import com.badlogic.gdx.backends.android.AndroidApplication;
 import com.badlogic.gdx.backends.android.AndroidApplicationConfiguration;
-import com.mdominguez.ietiParkAppMobil.Main;
-
+import com.mdominguez.ietiParkAppMobil.GameApp;
 
 
 /** Launches the Android application. */
@@ -18,6 +17,6 @@ public class AndroidLauncher extends AndroidApplication {
         AndroidApplicationConfiguration configuration = new AndroidApplicationConfiguration();
         configuration.useImmersiveMode = true; // Recommended, but not required.
         CommonWebSockets.initiate();
-        initialize(new Main(), configuration);
+        initialize(new GameApp(), configuration);
     }
 }
