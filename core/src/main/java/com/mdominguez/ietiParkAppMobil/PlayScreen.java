@@ -645,7 +645,7 @@ public class PlayScreen extends ScreenAdapter {
         pixmap.dispose();
     }
     private void returnToMenu() {
-        game.getWsClient().sendLeave(); // ← añadir esta línea
+        game.getWsClient().sendLeave();
         game.unloadReferencedAssetsForLevel(levelIndex);
         game.setScreen(new MenuScreen(game));
     }

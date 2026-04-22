@@ -120,6 +120,7 @@ public class MenuScreen extends ScreenAdapter implements WebSocketClient.PlayerL
         game.getWsClient().setMessageListener(this::handleServerMessage);
         game.getWsClient().setPlayerListListener(this);
 
+        //game.getWsClient().sendResetPlayers(); //activamos si necesitamos hacer un reset de conexiones muertas
         game.getWsClient().sendGetPlayers();
         updatePlayersFromClient();
         buildLayout();

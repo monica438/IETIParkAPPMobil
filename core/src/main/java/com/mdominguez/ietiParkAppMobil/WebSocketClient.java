@@ -276,6 +276,11 @@ public class WebSocketClient {
         send("{\"type\":\"JOIN\",\"nickname\":\"" + escapeJson(nickname) + "\"}");
     }
 
+    // Lo implementaremos si no nos funciona el cambio en el server para detectar conexiones muertas
+    public void sendResetPlayers() {
+        send("{\"type\":\"RESET_PLAYERS\"}");
+    }
+
     public void sendLeave() {
         if (confirmedNickname != null && !confirmedNickname.isEmpty()) {
             // Enviamos de forma síncrona y directa, sin encolar,
