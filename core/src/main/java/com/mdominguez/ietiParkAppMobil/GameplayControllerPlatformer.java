@@ -51,6 +51,7 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
     private boolean win = false;
     private boolean jumpQueued = false;
     private boolean facingRight = true;
+    private boolean hasLandedOnce = false;
 
     public GameplayControllerPlatformer(
         LevelData levelData,
@@ -77,15 +78,12 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         potionSpriteIndices = findSpriteIndicesByTypeOrName("potion", "red_potion");
         dragonDeathDurationSeconds = resolveDragonDeathDurationSeconds();
 
-        // Spawn sobre el floor (floor en serverY=181, worldHeight=192)
-        // La física trabaja en Y↓ igual que el servidor y las zonas del JSON
-        playerX = 160f;
-        playerY = 170f;
+        // Spawn por encima del suelo; la física lo posiciona correctamente en los primeros frames
+        playerX = findFloorSpawnX();
+        playerY = findFloorY() - 32f;
         spawnX = playerX;
         spawnY = playerY;
-
-        // Forzar onGround inicialmente
-        onGround = true;
+        onGround = false;
         velocityY = 0f;
 
         updatePlayerAnimationSelection();
@@ -187,6 +185,7 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         if (onGround && velocityY > 0f) {
             velocityY = 0f;
         }
+        if (onGround) hasLandedOnce = true;
 
         collectTouchedGems();
         collectTouchedPotions();
@@ -197,6 +196,27 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
 
         updatePlayerAnimationSelection();
         syncPlayerToSpriteRuntime();
+    }
+
+    private float findFloorY() {
+        float spawnX = findFloorSpawnX();
+        for (int i = 0; i < floorZoneIndices.size; i++) {
+            LevelData.LevelZone z = levelData.zones.get(floorZoneIndices.get(i));
+            if (spawnX >= z.x && spawnX <= z.x + z.width) return z.y;
+        }
+        if (floorZoneIndices.size > 0)
+            return levelData.zones.get(floorZoneIndices.get(0)).y;
+        return 164f;
+    }
+
+    private float findFloorSpawnX() {
+        if (floorZoneIndices.size > 0) {
+            LevelData.LevelZone z = levelData.zones.get(floorZoneIndices.get(0));
+            // Usar el centro del floor zone, pero clampear a coordenadas positivas
+            float centerX = z.x + z.width * 0.5f;
+            return Math.max(0f, centerX);
+        }
+        return 80f;
     }
 
     private float findGroundBelow(float x, float startY) {
@@ -734,7 +754,7 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
 
         String animationName = null;
         if (base != null && base.startsWith("cat")) {
-            if (!onGround) {
+            if (!onGround && hasLandedOnce) {
                 animationName = "jump_" + base;
             } else if (Math.abs(velocityX) > moveThreshold) {
                 animationName = "run_" + base;

@@ -4,7 +4,8 @@ import com.github.czyzby.websocket.CommonWebSockets;
 
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3Application;
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3ApplicationConfiguration;
-import com.mdominguez.ietiParkAppMobil.GameApp;
+import com.mdominguez.ietiParkAppMobil.GameApp; 
+
 
 /** Launches the desktop (LWJGL3) application. */
 public class Lwjgl3Launcher {

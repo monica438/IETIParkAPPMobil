@@ -218,10 +218,14 @@ public class PlayScreen extends ScreenAdapter {
         if (spriteIdx < 0 || spriteIdx >= spriteRuntimeStates.size) return;
 
         LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(spriteIdx);
+        if (!rp.hasPosition) {
+            rs.visible = false;
+            return;
+        }
         rs.worldX = rp.x;
         rs.worldY = rp.y;
         rs.flipX = rp.flipX;
-        rs.visible = true; // ← asegurar visible
+        rs.visible = true;
     }
 
     // ==================== INPUT ====================
@@ -433,7 +437,7 @@ public class PlayScreen extends ScreenAdapter {
 
             RemotePlayer rp = remotePlayers.get(nickname);
             if (rp == null) {
-                rp = new RemotePlayer(nickname, levelData.viewportX + 160f, 170f);
+                rp = new RemotePlayer(nickname);
                 remotePlayers.put(nickname, rp);
             }
             rp.cat = cat;  // Guardar el gato asignado
@@ -503,15 +507,13 @@ public class PlayScreen extends ScreenAdapter {
 
         RemotePlayer rp = remotePlayers.get(nickname);
         if (rp == null) {
-            rp = new RemotePlayer(nickname, x > 0 ? x : 160f, 170f);
+            rp = new RemotePlayer(nickname);
             remotePlayers.put(nickname, rp);
         }
 
         rp.direction = dir;
         rp.flipX     = "LEFT".equals(dir);
-        if (x >= 0) rp.x = x;
-        // worldY usa coordenadas Y↓ (igual que el servidor); LevelRenderer convierte internamente
-        if (y >= 0) rp.y = y;
+        if (x >= 0) { rp.x = x; rp.y = y; rp.hasPosition = true; }
 
         // Si es el jugador local, reconciliar posición con el servidor
         if (nickname.equals(myNickname)) {
@@ -523,10 +525,11 @@ public class PlayScreen extends ScreenAdapter {
             return;
         }
 
-        // Aplicar al sprite asignado
+        // Aplicar al sprite asignado solo si ya tiene posición válida
         Integer spriteIdx = playerToCatSprite.get(nickname);
         if (spriteIdx != null && spriteIdx != localPlayerCatIndex
-            && spriteIdx >= 0 && spriteIdx < spriteRuntimeStates.size) {
+            && spriteIdx >= 0 && spriteIdx < spriteRuntimeStates.size
+            && rp.hasPosition) {
             LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(spriteIdx);
             rs.worldX   = rp.x;
             rs.worldY   = rp.y;
@@ -552,10 +555,7 @@ public class PlayScreen extends ScreenAdapter {
 
     private void addRemotePlayer(String nickname) {
         if (remotePlayers.containsKey(nickname)) return;
-        // Spawn en coordenadas Y↓ (igual que el servidor); LevelRenderer convierte al renderizar
-        float spawnX = 160f;
-        float spawnY = 170f;
-        RemotePlayer rp = new RemotePlayer(nickname, spawnX, spawnY);
+        RemotePlayer rp = new RemotePlayer(nickname);
         remotePlayers.put(nickname, rp);
         assignCatSpriteIfNeeded(nickname, rp);
     }
