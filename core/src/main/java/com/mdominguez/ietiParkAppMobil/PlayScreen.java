@@ -383,6 +383,16 @@ public class PlayScreen extends ScreenAdapter {
             }
         }
         for (String nick : toRemove) {
+            Integer spriteIdx = playerToCatSprite.remove(nick);
+            if (spriteIdx != null && spriteIdx >= 0
+                && spriteIdx < spriteRuntimeStates.size
+                && spriteIdx != localPlayerCatIndex) {
+                LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(spriteIdx);
+                rs.visible = false;
+                // Reset de posición al spawn para que no quede flotando
+                rs.worldX = levelData.viewportX + 400f;
+                rs.worldY = levelData.viewportY + 390f; // mismo Y que el suelo
+            }
             remotePlayers.remove(nick);
         }
 
@@ -425,7 +435,7 @@ public class PlayScreen extends ScreenAdapter {
 
         RemotePlayer rp = remotePlayers.get(nickname);
         if (rp == null) {
-            rp = new RemotePlayer(nickname, levelData.viewportX + 100, levelData.viewportY + 100);
+            rp = new RemotePlayer(nickname, levelData.viewportX + 400f, 396f); // ← 396 en vez de viewportY+100
             remotePlayers.put(nickname, rp);
         }
 
@@ -455,13 +465,12 @@ public class PlayScreen extends ScreenAdapter {
 
     private void addRemotePlayer(String nickname) {
         if (remotePlayers.containsKey(nickname)) return;
-        // Usa la posición Y del suelo del jugador local como referencia
-        float spawnY = gameplayController.hasCameraTarget()
-            ? gameplayController.getCameraTargetY()
-            : levelData.viewportY + 100;
-        RemotePlayer rp = new RemotePlayer(nickname, levelData.viewportX + 100, spawnY);
+        // Spawn en el suelo, no en el centro de la pantalla
+        float spawnX = levelData.viewportX + 400f;
+        float spawnY = 396f; // Y del suelo (igual que los gatos en game_data.json)
+        RemotePlayer rp = new RemotePlayer(nickname, spawnX, spawnY);
         remotePlayers.put(nickname, rp);
-        assignCatSpriteIfNeeded(nickname, rp); // ← asignar sprite inmediatamente
+        assignCatSpriteIfNeeded(nickname, rp);
     }
 
     private void assignCatSpriteIfNeeded(String nickname, RemotePlayer rp) {
