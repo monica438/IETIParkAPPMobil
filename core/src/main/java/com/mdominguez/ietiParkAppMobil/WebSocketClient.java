@@ -45,8 +45,8 @@ public class WebSocketClient {
 
     // ==================== CONSTANTES DE RECONEXIÓN ====================
 
-    //private static final String SERVER_URL        = "wss://pico2.ieti.site";
-    private static final String SERVER_URL = "ws://10.0.2.2:8080";
+    private static final String SERVER_URL        = "wss://pico2.ieti.site";
+    //private static final String SERVER_URL = "ws://10.0.2.2:8080"; // Descomentar si queremos localhost
     private static final float  RECONNECT_DELAY_MIN = 1f;   // segundos inicial
     private static final float  RECONNECT_DELAY_MAX = 30f;  // segundos máximo
     private static final float  RECONNECT_DELAY_FACTOR = 2f; // multiplicador (backoff exponencial)
