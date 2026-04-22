@@ -45,7 +45,8 @@ public class WebSocketClient {
 
     // ==================== CONSTANTES DE RECONEXIÓN ====================
 
-    private static final String SERVER_URL        = "wss://pico2.ieti.site";
+    //private static final String SERVER_URL        = "wss://pico2.ieti.site";
+    private static final String SERVER_URL = "ws://10.0.2.2:8080";
     private static final float  RECONNECT_DELAY_MIN = 1f;   // segundos inicial
     private static final float  RECONNECT_DELAY_MAX = 30f;  // segundos máximo
     private static final float  RECONNECT_DELAY_FACTOR = 2f; // multiplicador (backoff exponencial)
@@ -248,7 +249,7 @@ public class WebSocketClient {
 
             case "MOVE":
                 String nick = root.getString("nickname", "?");
-                String direction = root.getString("direction", "?");
+                String direction = root.getString("dir", "?"); // ← "dir" no "direction"
                 Gdx.app.log("WebSocketClient", "MOVE de " + nick + ": " + direction);
                 notifyMessageListener(type, root);
                 break;

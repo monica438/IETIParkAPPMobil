@@ -6,6 +6,7 @@ public class RemotePlayer {
     public String direction;
     public boolean flipX;
     public boolean tempFlag; // Para sincronización de lista
+    public String cat;
 
     public RemotePlayer(String nickname, float x, float y) {
         this.nickname = nickname;

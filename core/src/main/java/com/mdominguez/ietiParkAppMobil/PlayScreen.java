@@ -222,8 +222,6 @@ public class PlayScreen extends ScreenAdapter {
         rs.worldY = rp.y;
         rs.flipX = rp.flipX;
         rs.visible = true; // ← asegurar visible
-
-        Gdx.app.log("SYNC", nickname + " -> sprite[" + spriteIdx + "] at (" + rp.x + "," + rp.y + ")");
     }
 
     // ==================== INPUT ====================
@@ -312,27 +310,58 @@ public class PlayScreen extends ScreenAdapter {
     private void sendMovementIfNeeded() {
         String dir = resolveDirection();
         long now = System.currentTimeMillis();
-        if (!dir.equals(lastSentDirection) && (now - lastWsSendTimeMs) >= WS_SEND_INTERVAL_MS) {
-            if (!dir.isEmpty()) {
-                // Obtener estado actual del gato local
-                String anim  = resolveCurrentAnimName();
-                int    frame = resolveCurrentFrame();
-                float  px    = gameplayController.getCameraTargetX();
-                float  py    = gameplayController.getCameraTargetY();
-                game.getWsClient().sendMove(dir, px, py, anim, frame);
-            }
+
+        // Siempre obtener la animación y frame actuales
+        String anim  = resolveCurrentAnimName();
+        int    frame = resolveCurrentFrame();
+        float  px    = resolveCurrentWorldX();
+        float  py    = resolveCurrentWorldY();
+
+        // Enviar si cambió la dirección o pasó el intervalo
+        if (!dir.equals(lastSentDirection) || (now - lastWsSendTimeMs) >= WS_SEND_INTERVAL_MS) {
+            game.getWsClient().sendMove(dir, px, py, anim, frame);
             lastSentDirection = dir;
             lastWsSendTimeMs  = now;
         }
     }
 
+    private float resolveCurrentWorldX() {
+        if (localPlayerCatIndex < 0 || localPlayerCatIndex >= spriteRuntimeStates.size)
+            return gameplayController.getCameraTargetX();
+        return spriteRuntimeStates.get(localPlayerCatIndex).worldX;
+    }
+
+
+    private float resolveCurrentWorldY() {
+        if (localPlayerCatIndex < 0 || localPlayerCatIndex >= spriteRuntimeStates.size)
+            return gameplayController.getCameraTargetY();
+        // Ya está en coordenadas del mundo (Y hacia abajo), no necesita conversión
+        return spriteRuntimeStates.get(localPlayerCatIndex).worldY;
+    }
+
     private String resolveCurrentAnimName() {
-        if (localPlayerCatIndex < 0 || localPlayerCatIndex >= spriteRuntimeStates.size) return "";
-        LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(localPlayerCatIndex);
-        // El animationId está en el runtime state; buscar el nombre del clip
-        if (rs.animationId == null || rs.animationId.isEmpty()) return "";
-        LevelData.AnimationClip clip = levelData.animationClips.get(rs.animationId);
-        return clip != null ? clip.name : rs.animationId;
+        if (localPlayerCatIndex < 0) return "idle_cat1";
+
+        // Obtener el ID de la animación actual del sprite runtime
+        String animId = null;
+        if (localPlayerCatIndex < spriteRuntimeStates.size) {
+            animId = spriteRuntimeStates.get(localPlayerCatIndex).animationId;
+        }
+
+        // Si no hay ID, intentar obtener el override del controlador
+        if (animId == null || animId.isEmpty()) {
+            animId = gameplayController.animationOverrideForSprite(localPlayerCatIndex);
+        }
+
+        if (animId == null || animId.isEmpty()) return "idle_cat1";
+
+        // Buscar el clip de animación por ID
+        LevelData.AnimationClip clip = levelData.animationClips.get(animId);
+        if (clip != null && clip.name != null && !clip.name.isEmpty()) {
+            return clip.name;
+        }
+
+        return "idle_cat1";
     }
 
     private int resolveCurrentFrame() {
@@ -344,7 +373,7 @@ public class PlayScreen extends ScreenAdapter {
         if (inputState.jumpPressed || inputState.jumpHeld) return "UP";
         if (inputState.moveX < -JOYSTICK_DEAD_ZONE) return "LEFT";
         if (inputState.moveX > JOYSTICK_DEAD_ZONE) return "RIGHT";
-        return "";
+        return "IDLE";
     }
 
     private void sendPositionUpdate() {
@@ -352,13 +381,13 @@ public class PlayScreen extends ScreenAdapter {
         if (!gameplayController.hasCameraTarget()) return;
 
         String dir = resolveDirection();
-        if (!dir.isEmpty()) {
-            String anim  = resolveCurrentAnimName();
-            int    frame = resolveCurrentFrame();
-            float  px    = gameplayController.getCameraTargetX();
-            float  py    = gameplayController.getCameraTargetY();
-            game.getWsClient().sendMove(dir, px, py, anim, frame);
-        }
+        // Siempre enviar la posición actual, incluso sin dirección
+        String anim  = resolveCurrentAnimName();
+        int    frame = resolveCurrentFrame();
+        float  px    = resolveCurrentWorldX();
+        float  py    = resolveCurrentWorldY();
+
+        //game.getWsClient().sendMove(dir.isEmpty() ? "IDLE" : dir, px, py, anim, frame);
     }
 
     // ==================== WEBSOCKET ====================
@@ -390,14 +419,18 @@ public class PlayScreen extends ScreenAdapter {
 
         // First pass: mark existing players as present
         for (JsonValue item = playersArray.child; item != null; item = item.next) {
-            String nickname = item.asString();
-            if (nickname.equals(myNickname)) continue;
+            // CORRECCIÓN: item es un objeto con campos "nickname" y "cat"
+            String nickname = item.getString("nickname", "");
+            String cat = item.getString("cat", "");
+
+            if (nickname.isEmpty() || nickname.equals(myNickname)) continue;
 
             RemotePlayer rp = remotePlayers.get(nickname);
             if (rp == null) {
                 rp = new RemotePlayer(nickname, levelData.viewportX + 100, levelData.viewportY + 100);
                 remotePlayers.put(nickname, rp);
             }
+            rp.cat = cat;  // Guardar el gato asignado
             rp.tempFlag = true;
         }
 
@@ -659,7 +692,7 @@ public class PlayScreen extends ScreenAdapter {
         playerToCatSprite.clear();
         localPlayerCatIndex = -1;
 
-        String myCat = game.getSelectedCat(); // ej: "cat1", "cat3"...
+        String myCat = game.getSelectedCat();
 
         for (int i = 0; i < levelData.sprites.size; i++) {
             LevelData.LevelSprite sprite = levelData.sprites.get(i);
@@ -667,24 +700,29 @@ public class PlayScreen extends ScreenAdapter {
             String type = normalize(sprite.type);
 
             if (name.contains("cat") || type.contains("cat")) {
-                // El gato del jugador local es el que coincide con el seleccionado
                 if (localPlayerCatIndex == -1
                     && myCat != null
                     && (name.equals(normalize(myCat)) || type.equals(normalize(myCat)))) {
                     localPlayerCatIndex = i;
+                    // Solo el gato local es visible al inicio
+                    if (i < spriteRuntimeStates.size) {
+                        spriteRuntimeStates.get(i).visible = true;
+                    }
                 } else {
                     catSpriteIndices.add(i);
-                }
-
-                if (i < spriteRuntimeStates.size) {
-                    spriteRuntimeStates.get(i).visible = true;
+                    // Gatos remotos: ocultos hasta que se asigne un jugador
+                    if (i < spriteRuntimeStates.size) {
+                        spriteRuntimeStates.get(i).visible = false;
+                    }
                 }
             }
         }
 
-        // Fallback: si no encontró el gato por nombre, coger el primero disponible
         if (localPlayerCatIndex == -1 && catSpriteIndices.size > 0) {
             localPlayerCatIndex = catSpriteIndices.removeIndex(0);
+            if (localPlayerCatIndex < spriteRuntimeStates.size) {
+                spriteRuntimeStates.get(localPlayerCatIndex).visible = true;
+            }
         }
 
         Gdx.app.log("CATS", "myCat=" + myCat
@@ -736,13 +774,10 @@ public class PlayScreen extends ScreenAdapter {
         if (localPlayerCatIndex < 0 || localPlayerCatIndex >= spriteRuntimeStates.size) return;
         if (!gameplayController.hasCameraTarget()) return;
 
-        float playerX = gameplayController.getCameraTargetX();
-        float playerYd = gameplayController.getCameraTargetY();
-
         LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(localPlayerCatIndex);
-        rs.worldX = playerX;
-        rs.worldY = playerYd;
-        rs.visible = true;
+        rs.worldX   = gameplayController.getCameraTargetX();
+        rs.worldY   = gameplayController.getCameraTargetY();
+        rs.visible  = true;
     }
 
     // ==================== MÉTODOS HEREDADOS (sin cambios) ====================

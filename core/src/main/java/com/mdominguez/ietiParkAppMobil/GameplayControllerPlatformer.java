@@ -1,5 +1,6 @@
 package com.mdominguez.ietiParkAppMobil;
 
+import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.IntArray;
@@ -62,17 +63,34 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         super(levelData, spriteRuntimeStates, layerVisibilityStates, zoneRuntimeStates, zonePreviousRuntimeStates);
         this.inputState = inputState;
         classifyZones();
+
+        // DEBUG: Mostrar zonas de suelo encontradas
+        Gdx.app.log("Platformer", "Zonas floor: " + floorZoneIndices.size);
+        for (int i = 0; i < floorZoneIndices.size; i++) {
+            int idx = floorZoneIndices.get(i);
+            LevelData.LevelZone z = levelData.zones.get(idx);
+            Gdx.app.log("Platformer", "  Floor " + idx + ": x=" + z.x + " y=" + z.y + " w=" + z.width + " h=" + z.height);
+        }
+
         gemSpriteIndices = findSpriteIndicesByTypeOrName("gem");
         dragonSpriteIndices = findSpriteIndicesByTypeOrName("dragon");
         potionSpriteIndices = findSpriteIndicesByTypeOrName("potion", "red_potion");
         dragonDeathDurationSeconds = resolveDragonDeathDurationSeconds();
-        onGround = isStandingOnFloor();
-        updatePlayerAnimationSelection();
 
-        // Bajar el spawn al suelo más cercano por debajo
-        playerY = findGroundBelow(playerX, playerY);
+        // Posición inicial del gato según game_data.json: x=280, y=396
+        // El suelo está en y=398, así que debería estar apoyado
+        playerX = 280f;
+        playerY = 396f;  // Justo encima del suelo (398 - altura del gato)
         spawnX = playerX;
         spawnY = playerY;
+
+        Gdx.app.log("Platformer", "Posición inicial: x=" + playerX + " y=" + playerY);
+
+        // Forzar onGround inicialmente
+        onGround = true;
+        velocityY = 0f;
+
+        updatePlayerAnimationSelection();
         syncPlayerToSpriteRuntime();
     }
 
@@ -135,12 +153,12 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
 
         applyMovingFloorCarry();
 
-        boolean hasSupport = isStandingOnFloor();
-        if (hasSupport && velocityY >= 0f) {
+        // Verificar si está en el suelo antes de aplicar gravedad
+        boolean wasOnGround = onGround;
+        onGround = isStandingOnFloor();
+
+        if (onGround && velocityY >= 0f) {
             velocityY = 0f;
-            onGround = true;
-        } else if (!hasSupport) {
-            onGround = false;
         }
 
         if (jumpQueued && onGround) {
@@ -149,26 +167,27 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         }
         jumpQueued = false;
 
-        if (!onGround || velocityY < 0f) {
+        if (!onGround) {
             velocityY += GRAVITY_PER_SECOND_SQ * dtSeconds;
             if (velocityY > MAX_FALL_SPEED_PER_SECOND) {
                 velocityY = MAX_FALL_SPEED_PER_SECOND;
             }
         }
 
-        float previousY = playerY;
+        // Movimiento horizontal
         float previousX = playerX;
         playerX += velocityX * dtSeconds;
         resolveHorizontalCollisions(previousX);
 
+        // Movimiento vertical
+        float previousY = playerY;
         playerY += velocityY * dtSeconds;
         boolean landed = resolveVerticalCollisions(previousY);
-        boolean standingOnFloor = isStandingOnFloor();
-        if ((landed || standingOnFloor) && velocityY >= 0f) {
+
+        // Actualizar estado onGround después del movimiento
+        onGround = isStandingOnFloor();
+        if (onGround && velocityY > 0f) {
             velocityY = 0f;
-            onGround = true;
-        } else {
-            onGround = false;
         }
 
         collectTouchedGems();
@@ -205,14 +224,19 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         floorZoneIndices.clear();
         solidZoneIndices.clear();
         deathZoneIndices.clear();
+
+        Gdx.app.log("Platformer", "Total zonas: " + levelData.zones.size);
+
         for (int i = 0; i < levelData.zones.size; i++) {
             LevelData.LevelZone zone = levelData.zones.get(i);
             String type = normalize(zone.type);
             String name = normalize(zone.name);
+
             if (containsAny(type, "death") || containsAny(name, "death")) {
                 deathZoneIndices.add(i);
                 continue;
             }
+
             boolean isFloor = containsAny(type, "floor", "platform") || containsAny(name, "floor", "platform");
             boolean isSolid = containsAny(type, "wall", "mur", "solid", "bloc", "block")
                 || containsAny(name, "wall", "mur", "solid", "bloc", "block");
@@ -220,11 +244,14 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
 
             if (isFloor) {
                 floorZoneIndices.add(i);
+                Gdx.app.log("Platformer", "Zona floor encontrada: " + i + " tipo=" + type + " nombre=" + name);
             }
             if (isSolid || isWallLikeFloor) {
                 solidZoneIndices.add(i);
             }
         }
+
+        Gdx.app.log("Platformer", "Total zonas floor: " + floorZoneIndices.size);
     }
 
     private void resolveHorizontalCollisions(float previousX) {
@@ -288,82 +315,34 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         }
 
         Rectangle playerRect = playerRect(rectCacheA);
-        Rectangle previousRect = playerRectAt(playerX, previousY, previousPlayerRectCache);
+        float playerBottom = playerRect.y + playerRect.height;
 
-        // One-way floor behavior:
-        // - Collide only when moving downward.
-        // - Ignore floor collisions while moving upward (jump-through from below).
-        if (velocityY <= 0f) {
-            return false;
-        }
+        Gdx.app.log("Platformer", String.format(
+            "resolveVerticalCollisions: playerY=%.1f previousY=%.1f playerBottom=%.1f",
+            playerY, previousY, playerBottom
+        ));
 
-        float previousBottom = previousRect.y + previousRect.height;
-        float currentBottom = playerRect.y + playerRect.height;
-        float playerBottomOffset = currentBottom - playerY;
-        float bestCrossDistance = Float.POSITIVE_INFINITY;
-        float bestLandingTop = Float.NaN;
+        boolean landed = false;
 
         for (int i = 0; i < floorZoneIndices.size; i++) {
             int zoneIndex = floorZoneIndices.get(i);
             Rectangle zoneRect = zoneRectAtIndex(zoneIndex, rectCacheB);
-            float zoneTop = zoneRect.y;
 
-            if (!overlapsHorizontallyForSweep(previousRect, playerRect, zoneRect)) {
-                continue;
-            }
-            if (!crossedZoneTop(previousBottom, currentBottom, zoneTop)) {
-                continue;
-            }
+            boolean horizontalOverlap = playerRect.x + playerRect.width > zoneRect.x &&
+                playerRect.x < zoneRect.x + zoneRect.width;
+            if (!horizontalOverlap) continue;
 
-            float crossDistance = zoneTop - previousBottom;
-            if (crossDistance < bestCrossDistance) {
-                bestCrossDistance = crossDistance;
-                bestLandingTop = zoneTop;
-            }
-        }
 
-        if (Float.isFinite(bestLandingTop)) {
-            playerY = bestLandingTop - playerBottomOffset;
-            velocityY = 0f;
-            return true;
-        }
-
-        // Fallback: if already penetrating near a floor top, push back upward.
-        float correctedY = playerY;
-        boolean landed = false;
-        for (int i = 0; i < 4; i++) {
-            Rectangle correctedRect = playerRectAt(playerX, correctedY, rectCacheA);
-            float maxPenetration = 0f;
-            for (int z = 0; z < floorZoneIndices.size; z++) {
-                int zoneIndex = floorZoneIndices.get(z);
-                Rectangle zoneRect = zoneRectAtIndex(zoneIndex, rectCacheB);
-                if (!overlapsHorizontallyForSweep(correctedRect, correctedRect, zoneRect)) {
-                    continue;
-                }
-                float zoneTop = zoneRect.y;
-                boolean crossedTop = correctedRect.y + correctedRect.height > zoneTop
-                    && correctedRect.y < zoneTop + 4f;
-                if (!crossedTop) {
-                    continue;
-                }
-                float penetration = correctedRect.y + correctedRect.height - zoneTop;
-                if (penetration > maxPenetration) {
-                    maxPenetration = penetration;
-                }
-            }
-            if (maxPenetration <= 0f) {
+            if (playerBottom >= zoneRect.y && playerBottom <= zoneRect.y + zoneRect.height + FLOOR_SUPPORT_DELTA) {
+                float oldY = playerY;
+                playerY = zoneRect.y - playerRect.height + (playerY - playerRect.y);
+                velocityY = 0f;
+                landed = true;
                 break;
             }
-            correctedY -= maxPenetration + 0.01f;
-            landed = true;
         }
 
-        if (landed) {
-            playerY = correctedY;
-            velocityY = 0f;
-            return true;
-        }
-        return false;
+        return landed;
     }
 
     private boolean isStandingOnFloor() {
@@ -372,22 +351,37 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         }
 
         Rectangle playerRect = playerRect(rectCacheA);
-        float testBottom = playerRect.y + playerRect.height + 0.5f;
-        float testLeft = playerRect.x;
-        float testRight = playerRect.x + playerRect.width;
+        float playerBottom = playerRect.y + playerRect.height;
+
 
         for (int i = 0; i < floorZoneIndices.size; i++) {
             int zoneIndex = floorZoneIndices.get(i);
             Rectangle zoneRect = zoneRectAtIndex(zoneIndex, rectCacheB);
-            boolean overlapsHorizontally = testRight > zoneRect.x && testLeft < zoneRect.x + zoneRect.width;
-            if (!overlapsHorizontally) {
+
+
+            // Verificar solapamiento horizontal
+            boolean horizontalOverlap = playerRect.x + playerRect.width > zoneRect.x &&
+                playerRect.x < zoneRect.x + zoneRect.width;
+
+            if (!horizontalOverlap) {
                 continue;
             }
-            float bottomDelta = Math.abs(testBottom - zoneRect.y);
-            if (bottomDelta <= FLOOR_SUPPORT_DELTA) {
+
+            // Verificar si el jugador está sobre el suelo
+            float distanceToFloor = playerBottom - zoneRect.y;
+
+            // El jugador está sobre el suelo si la distancia es pequeña
+            if (Math.abs(distanceToFloor) <= FLOOR_SUPPORT_DELTA) {
+                return true;
+            }
+
+            // O si está ligeramente dentro del suelo
+            if (distanceToFloor > 0 && distanceToFloor < FLOOR_SUPPORT_DELTA * 2) {
                 return true;
             }
         }
+
+        Gdx.app.log("Platformer", "  -> NOT on ground");
         return false;
     }
 
@@ -737,13 +731,11 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
 
         final float verticalThreshold = 5f;
         final float moveThreshold = 2f;
-        // Try to use cat-specific animation sets if the player sprite is a cat (e.g. "cat1")
         String base = normalize(playerSprite().name);
         if (base == null || base.isEmpty()) base = normalize(playerSprite().type);
 
         String animationName = null;
         if (base != null && base.startsWith("cat")) {
-            // expected animation names in animations.json: idle_cat1, run_cat1, jump_cat1
             if (!onGround) {
                 animationName = "jump_" + base;
             } else if (Math.abs(velocityX) > moveThreshold) {
@@ -752,7 +744,7 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
                 animationName = "idle_" + base;
             }
         } else {
-            // Fallback to previous behavior (named Foxy animations)
+            // Fallback para Foxy
             animationName = "Foxy Idle";
             if (!onGround) {
                 if (velocityY < -verticalThreshold) {
@@ -767,5 +759,13 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
 
         setPlayerFlip(!facingRight, false);
         setPlayerAnimationOverrideByName(animationName);
+
+        // Forzar actualización inmediata del sprite runtime
+        if (hasPlayer()) {
+            String animId = findAnimationIdByName(animationName);
+            if (animId != null) {
+                playerState().animationId = animId;
+            }
+        }
     }
 }

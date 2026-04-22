@@ -33,9 +33,9 @@
       "name": "floor",
       "type": "floor",
       "gameplayData": "",
-      "x": 350,
+      "x": 50,
       "y": 398,
-      "width": 1000,
+      "width": 1948,
       "height": 20,
       "color": "blue",
       "groupId": "__main__"
