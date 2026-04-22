@@ -42,6 +42,9 @@ public class GameApp extends Game {
     // WebSocket y nickname
     private WebSocketClient wsClient;
     private String playerNickname = "Player";
+    private String selectedCat = null;
+    public String getSelectedCat()              { return selectedCat; }
+    public void setSelectedCat(String cat)      { this.selectedCat = cat; }
 
     @Override
     public void create() {

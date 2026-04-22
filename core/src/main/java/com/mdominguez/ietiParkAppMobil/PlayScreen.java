@@ -138,14 +138,19 @@ public class PlayScreen extends ScreenAdapter {
     @Override
     public void show() {
         Gdx.input.setInputProcessor(null);
-
-        // Configurar listener de WebSocket
         wsMessageListener = this::handleServerMessage;
         game.getWsClient().setMessageListener(wsMessageListener);
 
-        // Enviar posición inicial y solicitar lista de jugadores
-        sendPositionUpdate();
+        String myCat = game.getSelectedCat();
+        if (myCat == null) {
+            // No debería ocurrir nunca, pero por seguridad
+            Gdx.app.postRunnable(() -> game.setScreen(new MenuScreen(game)));
+            return;
+        }
+
+        // No hace falta sendJoin aquí, ya se hizo en MenuScreen
         game.getWsClient().sendGetPlayers();
+        sendPositionUpdate();
     }
 
     @Override
@@ -305,16 +310,34 @@ public class PlayScreen extends ScreenAdapter {
     }
 
     private void sendMovementIfNeeded() {
-        String direction = resolveDirection();
+        String dir = resolveDirection();
         long now = System.currentTimeMillis();
-
-        if (!direction.equals(lastSentDirection) && (now - lastWsSendTimeMs) >= WS_SEND_INTERVAL_MS) {
-            if (!direction.isEmpty()) {
-                game.getWsClient().sendMove(direction);
+        if (!dir.equals(lastSentDirection) && (now - lastWsSendTimeMs) >= WS_SEND_INTERVAL_MS) {
+            if (!dir.isEmpty()) {
+                // Obtener estado actual del gato local
+                String anim  = resolveCurrentAnimName();
+                int    frame = resolveCurrentFrame();
+                float  px    = gameplayController.getCameraTargetX();
+                float  py    = gameplayController.getCameraTargetY();
+                game.getWsClient().sendMove(dir, px, py, anim, frame);
             }
-            lastSentDirection = direction;
-            lastWsSendTimeMs = now;
+            lastSentDirection = dir;
+            lastWsSendTimeMs  = now;
         }
+    }
+
+    private String resolveCurrentAnimName() {
+        if (localPlayerCatIndex < 0 || localPlayerCatIndex >= spriteRuntimeStates.size) return "";
+        LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(localPlayerCatIndex);
+        // El animationId está en el runtime state; buscar el nombre del clip
+        if (rs.animationId == null || rs.animationId.isEmpty()) return "";
+        LevelData.AnimationClip clip = levelData.animationClips.get(rs.animationId);
+        return clip != null ? clip.name : rs.animationId;
+    }
+
+    private int resolveCurrentFrame() {
+        if (localPlayerCatIndex < 0 || localPlayerCatIndex >= spriteRuntimeStates.size) return 0;
+        return spriteRuntimeStates.get(localPlayerCatIndex).frameIndex;
     }
 
     private String resolveDirection() {
@@ -328,9 +351,13 @@ public class PlayScreen extends ScreenAdapter {
         if (!game.getWsClient().isConnected()) return;
         if (!gameplayController.hasCameraTarget()) return;
 
-        String direction = resolveDirection();
-        if (!direction.isEmpty()) {
-            game.getWsClient().sendMove(direction);
+        String dir = resolveDirection();
+        if (!dir.isEmpty()) {
+            String anim  = resolveCurrentAnimName();
+            int    frame = resolveCurrentFrame();
+            float  px    = gameplayController.getCameraTargetX();
+            float  py    = gameplayController.getCameraTargetY();
+            game.getWsClient().sendMove(dir, px, py, anim, frame);
         }
     }
 
@@ -426,40 +453,51 @@ public class PlayScreen extends ScreenAdapter {
         }
          */
     }
-
     private void handleRemoteMove(JsonValue payload) {
         String nickname = payload.getString("nickname", "");
-        String direction = payload.getString("direction", "");
+        String dir      = payload.getString("dir",      "RIGHT");
+        float  x        = payload.getFloat("x",         -1f);
+        float  y        = payload.getFloat("y",         -1f);
+        String anim     = payload.getString("anim",     "");
+        int    frame    = payload.getInt("frame",        0);
 
         if (nickname.equals(myNickname)) return;
 
         RemotePlayer rp = remotePlayers.get(nickname);
         if (rp == null) {
-            rp = new RemotePlayer(nickname, levelData.viewportX + 400f, 396f); // ← 396 en vez de viewportY+100
+            rp = new RemotePlayer(nickname, x > 0 ? x : levelData.viewportX + 400f, 390f);
             remotePlayers.put(nickname, rp);
         }
 
-        rp.direction = direction;
-        rp.flipX = "LEFT".equals(direction);
+        rp.direction = dir;
+        rp.flipX     = "LEFT".equals(dir);
+        if (x >= 0) rp.x = x;
+        if (y >= 0) rp.y = y;
 
-        float moveSpeed = 5f;
-        if ("LEFT".equals(direction)) {
-            rp.x -= moveSpeed;
-        } else if ("RIGHT".equals(direction)) {
-            rp.x += moveSpeed;
-        }
-
-        rp.x = MathUtils.clamp(rp.x, 0, levelData.worldWidth - REMOTE_PLAYER_WIDTH);
-
-        // Al final de handleRemoteMove, sustituye el bloque de update por:
+        // Aplicar al sprite asignado
         Integer spriteIdx = playerToCatSprite.get(nickname);
-        if (spriteIdx != null && spriteIdx != localPlayerCatIndex  // ← guardia
-                && spriteIdx >= 0 && spriteIdx < spriteRuntimeStates.size) {
+        if (spriteIdx != null && spriteIdx != localPlayerCatIndex
+            && spriteIdx >= 0 && spriteIdx < spriteRuntimeStates.size) {
             LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(spriteIdx);
-            rs.worldX = rp.x;
-            rs.worldY = rp.y;
-            rs.flipX = rp.flipX;
-            rs.visible = true;
+            rs.worldX   = rp.x;
+            rs.worldY   = rp.y;
+            rs.flipX    = rp.flipX;
+            rs.visible  = true;
+            rs.frameIndex = frame;
+            // Cambiar animación si viene informada
+            if (!anim.isEmpty()) {
+                // Buscar el animationId por nombre
+                for (ObjectMap.Entry<String, LevelData.AnimationClip> entry
+                    : levelData.animationClips.entries()) {
+                    if (anim.equals(entry.value.name)) {
+                        rs.animationId  = entry.key;
+                        rs.texturePath  = entry.value.texturePath;
+                        rs.frameWidth   = entry.value.frameWidth;
+                        rs.frameHeight  = entry.value.frameHeight;
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -621,27 +659,37 @@ public class PlayScreen extends ScreenAdapter {
         playerToCatSprite.clear();
         localPlayerCatIndex = -1;
 
+        String myCat = game.getSelectedCat(); // ej: "cat1", "cat3"...
+
         for (int i = 0; i < levelData.sprites.size; i++) {
             LevelData.LevelSprite sprite = levelData.sprites.get(i);
-            String type = normalize(sprite.type);
             String name = normalize(sprite.name);
+            String type = normalize(sprite.type);
 
             if (name.contains("cat") || type.contains("cat")) {
-                if (localPlayerCatIndex == -1) {
-                    // Primer gato = jugador local
+                // El gato del jugador local es el que coincide con el seleccionado
+                if (localPlayerCatIndex == -1
+                    && myCat != null
+                    && (name.equals(normalize(myCat)) || type.equals(normalize(myCat)))) {
                     localPlayerCatIndex = i;
                 } else {
-                    // Resto de gatos = pool para remotos
                     catSpriteIndices.add(i);
                 }
-                // Mostrar TODOS los gatos al inicio
+
                 if (i < spriteRuntimeStates.size) {
                     spriteRuntimeStates.get(i).visible = true;
                 }
             }
         }
 
-        Gdx.app.log("CATS", "localPlayerCatIndex=" + localPlayerCatIndex + " remoteCats=" + catSpriteIndices.size);
+        // Fallback: si no encontró el gato por nombre, coger el primero disponible
+        if (localPlayerCatIndex == -1 && catSpriteIndices.size > 0) {
+            localPlayerCatIndex = catSpriteIndices.removeIndex(0);
+        }
+
+        Gdx.app.log("CATS", "myCat=" + myCat
+            + " localPlayerCatIndex=" + localPlayerCatIndex
+            + " remoteCats=" + catSpriteIndices.size);
     }
 
     private void createRemotePlayerTexture() {

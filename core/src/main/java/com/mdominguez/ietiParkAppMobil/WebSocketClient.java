@@ -1,7 +1,9 @@
 package com.mdominguez.ietiParkAppMobil;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.utils.JsonReader;
@@ -67,6 +69,11 @@ public class WebSocketClient {
     private MessageListener    messageListener;
     private ConnectionListener connectionListener;
 
+    private String confirmedCat = null;
+
+    private final Map<String, String> activePlayerCats = new HashMap<>();
+
+
     // ==================== SETTERS DE LISTENERS ====================
 
     public void setPlayerListListener(PlayerListListener listener) {
@@ -79,6 +86,12 @@ public class WebSocketClient {
 
     public void setConnectionListener(ConnectionListener listener) {
         this.connectionListener = listener;
+    }
+
+    public String getConfirmedCat() { return confirmedCat; }
+
+    public Map<String, String> getActivePlayerCats() {
+        return new HashMap<>(activePlayerCats);
     }
 
     // ==================== CONEXIÓN ====================
@@ -203,29 +216,32 @@ public class WebSocketClient {
 
         switch (type) {
             case "WELCOME":
-                Gdx.app.log("WebSocketClient", "Bienvenida: " + root.getString("msg", ""));
-                // Si teníamos nick confirmado, reenviar JOIN automáticamente
-                if (confirmedNickname != null && !confirmedNickname.isEmpty()) {
-                    Gdx.app.log("WebSocketClient", "Re-enviando JOIN como: " + confirmedNickname);
-                    sendJoin(confirmedNickname);
+                if (confirmedNickname != null && !confirmedNickname.isEmpty()
+                    && confirmedCat != null && !confirmedCat.isEmpty()) {
+                    sendJoin(confirmedNickname, confirmedCat);
                 }
                 break;
 
             case "JOIN_OK":
                 confirmedNickname = root.getString("nickname", "");
-                Gdx.app.log("WebSocketClient", "JOIN confirmado como: " + confirmedNickname);
+                confirmedCat      = root.getString("cat", "");  // ← guardar cat confirmado
                 notifyMessageListener(type, root);
                 break;
 
             case "PLAYER_LIST":
                 JsonValue playersArray = root.get("players");
                 activePlayers.clear();
+                activePlayerCats.clear(); // ← nuevo Map<String,String>
                 if (playersArray != null) {
                     for (JsonValue item = playersArray.child; item != null; item = item.next) {
-                        activePlayers.add(item.asString());
+                        String nick = item.getString("nickname", "");
+                        String cat  = item.getString("cat", "");
+                        if (!nick.isEmpty()) {
+                            activePlayers.add(nick);
+                            activePlayerCats.put(nick, cat);
+                        }
                     }
                 }
-                Gdx.app.log("WebSocketClient", "Lista actualizada: " + activePlayers);
                 notifyPlayerList();
                 notifyMessageListener(type, root);
                 break;
@@ -272,8 +288,10 @@ public class WebSocketClient {
 
     // ==================== MENSAJES SALIENTES ====================
 
-    public void sendJoin(String nickname) {
-        send("{\"type\":\"JOIN\",\"nickname\":\"" + escapeJson(nickname) + "\"}");
+    public void sendJoin(String nickname, String cat) {
+        send("{\"type\":\"JOIN\","
+            + "\"nickname\":\"" + escapeJson(nickname) + "\","
+            + "\"cat\":\"" + escapeJson(cat) + "\"}");
     }
 
     // Lo implementaremos si no nos funciona el cambio en el server para detectar conexiones muertas
@@ -299,11 +317,13 @@ public class WebSocketClient {
         }
     }
 
-    public void sendMove(String direction) {
-        long timestamp = System.currentTimeMillis();
+    public void sendMove(String dir, float x, float y, String anim, int frame) {
         send("{\"type\":\"MOVE\","
-            + "\"direction\":\"" + direction + "\","
-            + "\"timestamp\":" + timestamp + "}");
+            + "\"dir\":\"" + escapeJson(dir) + "\","
+            + "\"x\":" + (int)x + ","
+            + "\"y\":" + (int)y + ","
+            + "\"anim\":\"" + escapeJson(anim) + "\","
+            + "\"frame\":" + frame + "}");
     }
 
     public void sendGetPlayers() {
