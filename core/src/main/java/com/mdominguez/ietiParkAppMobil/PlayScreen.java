@@ -405,6 +405,23 @@ public class PlayScreen extends ScreenAdapter {
                 if (!newPlayer.isEmpty() && !newPlayer.equals(myNickname)) {
                     addRemotePlayer(newPlayer);
                 }
+                game.getWsClient().sendGetState();
+                break;
+            case "FULL_STATE":
+                JsonValue playersArray = payload.get("players");
+                for (JsonValue item = playersArray.child; item != null; item = item.next) {
+                    String nickname = item.getString("nickname", "");
+                    if (nickname.equals(myNickname)) continue;
+
+                    RemotePlayer rp = remotePlayers.get(nickname);
+                    if (rp != null) {
+                        rp.x = item.getFloat("x");
+                        rp.y = item.getFloat("y");
+                        rp.direction = item.getString("dir", "RIGHT");
+                        // Actualizar sprite
+                        syncSpriteToPlayer(nickname, rp);
+                    }
+                }
                 break;
         }
     }

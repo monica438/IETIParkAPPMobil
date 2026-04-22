@@ -254,6 +254,12 @@ public class WebSocketClient {
                 notifyMessageListener(type, root);
                 break;
 
+            case "FULL_STATE":
+                JsonValue players = root.get("players");
+                // Procesar todas las posiciones iniciales
+                notifyMessageListener(type, root);
+                break;
+
             default:
                 Gdx.app.log("WebSocketClient", "Tipo de mensaje desconocido: " + type);
                 break;
@@ -329,6 +335,10 @@ public class WebSocketClient {
 
     public void sendGetPlayers() {
         send("{\"type\":\"GET_PLAYERS\"}");
+    }
+
+    public void sendGetState() {
+        send("{\"type\":\"GET_STATE\"}");
     }
 
     private void send(String message) {
