@@ -222,6 +222,13 @@ public class MenuScreen extends ScreenAdapter implements WebSocketClient.PlayerL
         if (waitingForJoin) {
             statusText = "Conectando al servidor...";
             statusColor = WAITING_COLOR;
+        } else if (game.getWsClient().isReconnecting()) {
+            // Mostrar cuenta atrás
+            int secsLeft = (int) Math.ceil(
+                game.getWsClient().getReconnectDelay() * (1f - game.getWsClient().getReconnectProgress())
+            );
+            statusText = "Reconectando en " + secsLeft + "s...";
+            statusColor = WAITING_COLOR;
         } else {
             statusText = connected ? "Servidor conectado" : "Servidor desconectado";
             statusColor = connected ? STATUS_OK : STATUS_KO;

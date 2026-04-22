@@ -279,6 +279,12 @@ public class GameApp extends Game {
     }
 
     @Override
+    public void render() {
+        wsClient.update(Gdx.graphics.getDeltaTime()); // ← añadir esta línea
+        super.render();
+    }
+
+    @Override
     public void dispose() {
         super.dispose();
         assetManager.dispose();

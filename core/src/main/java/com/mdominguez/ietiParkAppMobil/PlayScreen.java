@@ -103,7 +103,7 @@ public class PlayScreen extends ScreenAdapter {
     private final String myNickname;
     private static final float REMOTE_PLAYER_WIDTH = 32f;
     private static final float REMOTE_PLAYER_HEIGHT = 32f;
-    
+
     // Cat sprite mapping
     private IntArray catSpriteIndices = new IntArray();
     private ObjectMap<String, Integer> playerToCatSprite = new ObjectMap<>();
@@ -120,7 +120,7 @@ public class PlayScreen extends ScreenAdapter {
         this.layerVisibility = buildInitialLayerVisibility(levelData);
         this.viewport = createViewport(levelData, camera);
         camera.setToOrtho(false);
-        viewport.update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), false);
+        viewport.update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), true);
         applyInitialCamera();
         initAnimationState();
         initTransformState();
@@ -211,13 +211,13 @@ public class PlayScreen extends ScreenAdapter {
         if (spriteIdx == null) return;
         if (spriteIdx == localPlayerCatIndex) return;
         if (spriteIdx < 0 || spriteIdx >= spriteRuntimeStates.size) return;
-        
+
         LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(spriteIdx);
         rs.worldX = rp.x;
         rs.worldY = rp.y;
         rs.flipX = rp.flipX;
         rs.visible = true; // ← asegurar visible
-        
+
         Gdx.app.log("SYNC", nickname + " -> sprite[" + spriteIdx + "] at (" + rp.x + "," + rp.y + ")");
     }
 
@@ -402,10 +402,11 @@ public class PlayScreen extends ScreenAdapter {
             }
         }
 
+        /*
         // En handlePlayerList, dentro del bucle de toRemove, antes de remotePlayers.remove():
         for (String nick : toRemove) {
             Integer spriteIdx = playerToCatSprite.get(nick);
-            if (spriteIdx != null && spriteIdx >= 0 
+            if (spriteIdx != null && spriteIdx >= 0
                     && spriteIdx < spriteRuntimeStates.size
                     && spriteIdx != localPlayerCatIndex) {
                 spriteRuntimeStates.get(spriteIdx).visible = false; // ← ocultar al desconectar
@@ -413,6 +414,7 @@ public class PlayScreen extends ScreenAdapter {
             playerToCatSprite.remove(nick);
             remotePlayers.remove(nick);
         }
+         */
     }
 
     private void handleRemoteMove(JsonValue payload) {
@@ -454,8 +456,8 @@ public class PlayScreen extends ScreenAdapter {
     private void addRemotePlayer(String nickname) {
         if (remotePlayers.containsKey(nickname)) return;
         // Usa la posición Y del suelo del jugador local como referencia
-        float spawnY = gameplayController.hasCameraTarget() 
-            ? gameplayController.getCameraTargetY() 
+        float spawnY = gameplayController.hasCameraTarget()
+            ? gameplayController.getCameraTargetY()
             : levelData.viewportY + 100;
         RemotePlayer rp = new RemotePlayer(nickname, levelData.viewportX + 100, spawnY);
         remotePlayers.put(nickname, rp);
@@ -464,7 +466,7 @@ public class PlayScreen extends ScreenAdapter {
 
     private void assignCatSpriteIfNeeded(String nickname, RemotePlayer rp) {
         if (playerToCatSprite.containsKey(nickname)) return;
-        
+
         for (int i = 0; i < catSpriteIndices.size; i++) {
             int catIdx = catSpriteIndices.get(i);
             boolean assigned = false;
@@ -487,20 +489,20 @@ public class PlayScreen extends ScreenAdapter {
     private void renderRemotePlayers(SpriteBatch batch) {
         // In single-player mode, keep cat sprites visible as decorations
         // Only control visibility for cats assigned to remote players
-        
+
         // Render nicknames over assigned cat sprites
         for (ObjectMap.Entry<String, Integer> entry : playerToCatSprite.entries()) {
             String nickname = entry.key;
             Integer spriteIdx = entry.value;
-            
+
             if (spriteIdx == null || spriteIdx < 0 || spriteIdx >= spriteRuntimeStates.size) {
                 continue;
             }
-            
+
             LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(spriteIdx);
             float drawX = rs.worldX;
             float drawY = levelData.worldHeight - rs.worldY - rs.frameHeight;
-            
+
             // Draw nickname above sprite
             BitmapFont font = game.getFont();
             font.setColor(Color.WHITE);
@@ -642,8 +644,8 @@ public class PlayScreen extends ScreenAdapter {
         remotePlayerTexture = new Texture(pixmap);
         pixmap.dispose();
     }
-
     private void returnToMenu() {
+        game.getWsClient().sendLeave(); // ← añadir esta línea
         game.unloadReferencedAssetsForLevel(levelIndex);
         game.setScreen(new MenuScreen(game));
     }
@@ -664,22 +666,22 @@ public class PlayScreen extends ScreenAdapter {
             snapshotPreviousZones();
             advancePathBindings(FIXED_STEP_SECONDS);
             gameplayController.fixedUpdate(FIXED_STEP_SECONDS);
-            
+
             // Sincronizar gato del jugador local con su posición
             syncLocalPlayerCatSprite();
-            
+
             updateAnimations(FIXED_STEP_SECONDS);
             fixedStepAccumulator -= FIXED_STEP_SECONDS;
         }
     }
-    
+
     private void syncLocalPlayerCatSprite() {
         if (localPlayerCatIndex < 0 || localPlayerCatIndex >= spriteRuntimeStates.size) return;
         if (!gameplayController.hasCameraTarget()) return;
-        
+
         float playerX = gameplayController.getCameraTargetX();
         float playerYd = gameplayController.getCameraTargetY();
-        
+
         LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(localPlayerCatIndex);
         rs.worldX = playerX;
         rs.worldY = playerYd;
@@ -928,6 +930,14 @@ public class PlayScreen extends ScreenAdapter {
         float wH = Math.max(1f, levelData.worldHeight);
         float vW = Math.max(1f, viewport.getWorldWidth());
         float vH = Math.max(1f, viewport.getWorldHeight());
+
+        // Si el mundo cabe entero, centrar cámara fija
+        if (wW <= vW && wH <= vH) {
+            camera.position.set(wW * 0.5f, wH * 0.5f, 0f);
+            camera.update();
+            return;
+        }
+
         float hW = vW * 0.5f, hH = vH * 0.5f;
 
         float pX = gameplayController.getCameraTargetX();
@@ -999,7 +1009,7 @@ public class PlayScreen extends ScreenAdapter {
                 if (Gdx.app != null && Gdx.app.getType() == Application.ApplicationType.Android) {
                     return new ExtendViewport(d.viewportWidth, d.viewportHeight, cam);
                 }
-                return new FitViewport(d.viewportWidth, d.viewportHeight, cam);
+                return new ExtendViewport(d.viewportWidth, d.viewportHeight, cam);
         }
     }
 

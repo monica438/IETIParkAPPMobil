@@ -68,6 +68,11 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         dragonDeathDurationSeconds = resolveDragonDeathDurationSeconds();
         onGround = isStandingOnFloor();
         updatePlayerAnimationSelection();
+
+        // Bajar el spawn al suelo más cercano por debajo
+        playerY = findGroundBelow(playerX, playerY);
+        spawnX = playerX;
+        spawnY = playerY;
         syncPlayerToSpriteRuntime();
     }
 
@@ -175,6 +180,25 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
 
         updatePlayerAnimationSelection();
         syncPlayerToSpriteRuntime();
+    }
+
+    private float findGroundBelow(float x, float startY) {
+        // Buscar zona floor/suelo debajo del jugador
+        for (int i = 0; i < levelData.zones.size; i++) {
+            LevelData.LevelZone zone = levelData.zones.get(i);
+            String type = normalize(zone.type);
+            String name = normalize(zone.name);
+            if (!containsAny(type, "floor") && !containsAny(name, "floor")) continue;
+
+            // ¿El jugador está horizontalmente dentro de esta zona?
+            if (x >= zone.x && x <= zone.x + zone.width) {
+                // Colocar al jugador justo encima del suelo
+                LevelRenderer.SpriteRuntimeState rs = playerState();
+                float halfH = rs.frameHeight * rs.anchorY;
+                return zone.y - halfH;
+            }
+        }
+        return startY; // sin suelo encontrado, dejar como está
     }
 
     private void classifyZones() {
