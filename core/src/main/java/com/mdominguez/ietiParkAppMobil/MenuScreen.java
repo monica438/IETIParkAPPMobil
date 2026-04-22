@@ -65,6 +65,8 @@ public class MenuScreen extends ScreenAdapter implements WebSocketClient.PlayerL
     private final Rectangle fieldRect = new Rectangle();
     private final Rectangle playRect  = new Rectangle();
 
+    private String selectedCat = null;
+
     private final InputAdapter inputAdapter = new InputAdapter() {
 
         @Override
@@ -120,6 +122,7 @@ public class MenuScreen extends ScreenAdapter implements WebSocketClient.PlayerL
         game.getWsClient().setMessageListener(this::handleServerMessage);
         game.getWsClient().setPlayerListListener(this);
 
+        //game.getWsClient().sendResetPlayers(); //activamos si necesitamos hacer un reset de conexiones muertas
         game.getWsClient().sendGetPlayers();
         updatePlayersFromClient();
         buildLayout();
@@ -137,13 +140,10 @@ public class MenuScreen extends ScreenAdapter implements WebSocketClient.PlayerL
     private void handleServerMessage(String type, JsonValue payload) {
         if ("JOIN_OK".equals(type) && waitingForJoin) {
             String confirmedNick = payload.getString("nickname", "");
-            Gdx.app.log("MenuScreen", "JOIN_OK recibido: " + confirmedNick);
+            String confirmedCat  = payload.getString("cat", "");
             game.setPlayerNickname(confirmedNick);
-
-            // Ahora sí podemos navegar al nivel
-            Gdx.app.postRunnable(() -> {
-                game.setScreen(new LoadingScreen(game, 0));
-            });
+            game.setSelectedCat(confirmedCat); // ← guardar gato confirmado
+            Gdx.app.postRunnable(() -> game.setScreen(new LoadingScreen(game, 0)));
             waitingForJoin = false;
         }
     }
@@ -222,6 +222,13 @@ public class MenuScreen extends ScreenAdapter implements WebSocketClient.PlayerL
         if (waitingForJoin) {
             statusText = "Conectando al servidor...";
             statusColor = WAITING_COLOR;
+        } else if (game.getWsClient().isReconnecting()) {
+            // Mostrar cuenta atrás
+            int secsLeft = (int) Math.ceil(
+                game.getWsClient().getReconnectDelay() * (1f - game.getWsClient().getReconnectProgress())
+            );
+            statusText = "Reconectando en " + secsLeft + "s...";
+            statusColor = WAITING_COLOR;
         } else {
             statusText = connected ? "Servidor conectado" : "Servidor desconectado";
             statusColor = connected ? STATUS_OK : STATUS_KO;
@@ -238,9 +245,16 @@ public class MenuScreen extends ScreenAdapter implements WebSocketClient.PlayerL
             drawCentered(batch, font, displayText, fieldRect.y + fieldRect.height * 0.65f, 1.8f, FIELD_ACTIVE);
         }
 
-        // Texto del botón cambia si estamos esperando
-        String buttonText = waitingForJoin ? "CONECTANDO..." : "PLAY";
-        drawCentered(batch, font, buttonText, playRect.y + playRect.height * 0.65f, 2.0f, PRIMARY);
+        boolean salaLlena = pickAvailableCat() == null;
+
+        String buttonText;
+        if (waitingForJoin)  buttonText = "CONECTANDO...";
+        else if (salaLlena)  buttonText = "SALA LLENA";
+        else                 buttonText = "PLAY";
+
+        Color buttonColor = salaLlena ? DIM : PRIMARY;
+        drawCentered(batch, font, buttonText,
+            playRect.y + playRect.height * 0.65f, 2.0f, buttonColor);
 
         float playersTopY = playRect.y - 40f;
         int count = activePlayers.size;
@@ -248,10 +262,11 @@ public class MenuScreen extends ScreenAdapter implements WebSocketClient.PlayerL
 
         float listY = playersTopY - 36f;
         for (int i = 0; i < activePlayers.size; i++) {
-            // Resaltar nuestro propio nick si coincide
             String player = activePlayers.get(i);
+            String cat    = game.getWsClient().getActivePlayerCats().get(player);
+            String label  = "• " + player + (cat != null ? " (" + cat + ")" : "");
             Color playerColor = player.equals(game.getPlayerNickname()) ? PRIMARY : PLAYER_COLOR;
-            drawCentered(batch, font, "• " + player, listY, 1.3f, playerColor);
+            drawCentered(batch, font, label, listY, 1.3f, playerColor);
             listY -= 30f;
         }
         if (activePlayers.size == 0) {
@@ -264,8 +279,8 @@ public class MenuScreen extends ScreenAdapter implements WebSocketClient.PlayerL
     }
 
     private void onPlayPressed() {
-        // No permitir múltiples clicks mientras esperamos
         if (waitingForJoin) return;
+        if (pickAvailableCat() == null) return;
 
         String nick = nickname.toString().trim();
         if (nick.isEmpty()) {
@@ -278,15 +293,28 @@ public class MenuScreen extends ScreenAdapter implements WebSocketClient.PlayerL
             return;
         }
 
-        // Guardar nick y esperar JOIN_OK antes de navegar
+        // Elegir gato disponible
+        selectedCat = pickAvailableCat();
+        if (selectedCat == null) {
+            Gdx.app.log("MenuScreen", "Sala llena");
+            return;
+        }
+
         lastSentNickname = nick;
         game.setPlayerNickname(nick);
-        game.getWsClient().sendJoin(nick);
-
+        game.getWsClient().sendJoin(nick, selectedCat); // ← con gato
         waitingForJoin = true;
         waitingTime = 0f;
+    }
 
-        Gdx.app.log("MenuScreen", "Enviado JOIN, esperando respuesta...");
+    private String pickAvailableCat() {
+        java.util.Map<String, String> usedCats = game.getWsClient().getActivePlayerCats();
+        java.util.Set<String> usedValues = new java.util.HashSet<>(usedCats.values());
+        String[] allCats = {"cat1","cat2","cat3","cat4","cat5","cat6","cat7","cat8"};
+        for (String cat : allCats) {
+            if (!usedValues.contains(cat)) return cat;
+        }
+        return null;
     }
 
     private void buildLayout() {

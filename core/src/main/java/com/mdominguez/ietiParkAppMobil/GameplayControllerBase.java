@@ -405,16 +405,29 @@ public abstract class GameplayControllerBase implements GameplayController {
     }
 
     private int findPlayerSpriteIndex() {
+        // Prefer explicit cat sprites (cat, kitty, gato) first
         for (int i = 0; i < levelData.sprites.size; i++) {
             LevelData.LevelSprite sprite = levelData.sprites.get(i);
             String type = normalize(sprite.type);
             String name = normalize(sprite.name);
-            if (containsAny(type, "cat")
-                || containsAny(name, "cat")) {
+            if (containsAny(type, "cat", "kitty", "gato") || containsAny(name, "cat", "kitty", "gato")) {
                 return i;
             }
         }
-        return levelData.sprites.size > 0 ? 0 : -1;
+
+        // Fallback to traditional player/hero tokens
+        for (int i = 0; i < levelData.sprites.size; i++) {
+            LevelData.LevelSprite sprite = levelData.sprites.get(i);
+            String type = normalize(sprite.type);
+            String name = normalize(sprite.name);
+            if (containsAny(type, "player", "hero", "heroi", "foxy")
+                || containsAny(name, "player", "hero", "heroi", "foxy")) {
+                return i;
+            }
+        }
+
+        // Avoid implicitly choosing the first sprite (often a shop). If none found, return -1.
+        return -1;
     }
 
     private void setFullSpriteRect(
@@ -426,9 +439,11 @@ public abstract class GameplayControllerBase implements GameplayController {
     ) {
         float anchorX = runtime == null ? sprite.anchorX : runtime.anchorX;
         float anchorY = runtime == null ? sprite.anchorY : runtime.anchorY;
-        float left = worldX - sprite.width * anchorX;
-        float top = worldY - sprite.height * anchorY;
-        out.set(left, top, sprite.width, sprite.height);
+        float frameWidth = runtime != null && runtime.frameWidth > 0 ? runtime.frameWidth : sprite.width;
+        float frameHeight = runtime != null && runtime.frameHeight > 0 ? runtime.frameHeight : sprite.height;
+        float left = worldX - frameWidth * anchorX;
+        float top = worldY - frameHeight * anchorY;
+        out.set(left, top, frameWidth, frameHeight);
     }
 
     private Rectangle hitBoxRectAt(
@@ -441,8 +456,10 @@ public abstract class GameplayControllerBase implements GameplayController {
     ) {
         float anchorX = runtime == null ? sprite.anchorX : runtime.anchorX;
         float anchorY = runtime == null ? sprite.anchorY : runtime.anchorY;
-        float left = worldX - sprite.width * anchorX;
-        float top = worldY - sprite.height * anchorY;
+        float frameWidth = runtime != null && runtime.frameWidth > 0 ? runtime.frameWidth : sprite.width;
+        float frameHeight = runtime != null && runtime.frameHeight > 0 ? runtime.frameHeight : sprite.height;
+        float left = worldX - frameWidth * anchorX;
+        float top = worldY - frameHeight * anchorY;
 
         float normalizedX = hitBox.x;
         float normalizedY = hitBox.y;
@@ -453,10 +470,10 @@ public abstract class GameplayControllerBase implements GameplayController {
             normalizedY = 1f - hitBox.y - hitBox.height;
         }
 
-        float x = left + normalizedX * sprite.width;
-        float y = top + normalizedY * sprite.height;
-        float width = hitBox.width * sprite.width;
-        float height = hitBox.height * sprite.height;
+        float x = left + normalizedX * frameWidth;
+        float y = top + normalizedY * frameHeight;
+        float width = hitBox.width * frameWidth;
+        float height = hitBox.height * frameHeight;
         out.set(x, y, width, height);
         return out;
     }

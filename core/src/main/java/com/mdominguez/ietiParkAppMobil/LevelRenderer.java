@@ -239,17 +239,16 @@ public final class LevelRenderer {
         boolean flipY = runtimeState == null ? sprite.flipY : runtimeState.flipY;
         Texture texture = assets.get(texturePath, Texture.class);
         configureTexture(texture);
-        float leftDown = worldX - sprite.width * anchorX;
-        float topDown = worldY - sprite.height * anchorY;
-        float x = leftDown;
-        float y = worldHeight - topDown - sprite.height;
-        float originX = sprite.width * anchorX;
-        // anchorY is defined from top in y-down space; SpriteBatch origin is from bottom in y-up space.
-        float originY = sprite.height * (1f - anchorY);
         int frameWidth = runtimeState == null ? Math.max(1, Math.round(sprite.width)) : Math.max(1, runtimeState.frameWidth);
         int frameHeight = runtimeState == null ? Math.max(1, Math.round(sprite.height)) : Math.max(1, runtimeState.frameHeight);
         frameWidth = Math.min(frameWidth, texture.getWidth());
         frameHeight = Math.min(frameHeight, texture.getHeight());
+        float leftDown = worldX - frameWidth * anchorX;
+        float topDown = worldY - frameHeight * anchorY;
+        float x = leftDown;
+        float y = worldHeight - topDown - frameHeight;
+        float originX = frameWidth * anchorX;
+        float originY = frameHeight * (1f - anchorY);
         TextureRegion[][] regions = getSplitRegions(texturePath, texture, frameWidth, frameHeight);
         if (regions.length == 0 || regions[0].length == 0) {
             return;
@@ -266,14 +265,17 @@ public final class LevelRenderer {
         }
         TextureRegion region = regions[srcRow][srcCol];
 
+        float renderWidth = runtimeState != null && runtimeState.frameWidth > 0 ? runtimeState.frameWidth : sprite.width;
+        float renderHeight = runtimeState != null && runtimeState.frameHeight > 0 ? runtimeState.frameHeight : sprite.height;
+
         batch.draw(
             region,
             x,
             y,
             originX,
             originY,
-            sprite.width,
-            sprite.height,
+            renderWidth,
+            renderHeight,
             flipX ? -1f : 1f,
             flipY ? -1f : 1f,
             0f

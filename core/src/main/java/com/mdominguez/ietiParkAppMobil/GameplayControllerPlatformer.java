@@ -1,5 +1,6 @@
 package com.mdominguez.ietiParkAppMobil;
 
+import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.IntArray;
@@ -28,6 +29,8 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
     private final IntArray deathZoneIndices = new IntArray();
     private final IntArray gemSpriteIndices;
     private final IntArray dragonSpriteIndices;
+    private final IntArray potionSpriteIndices;
+    private final IntSet collectedPotionSpriteIndices = new IntSet();
     private final IntFloatMap dragonDeathStartSecondsBySprite = new IntFloatMap();
     private final IntArray completedDragonDeathSpriteIndices = new IntArray();
     private final IntSet collectedGemSpriteIndices = new IntSet();
@@ -60,10 +63,31 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         super(levelData, spriteRuntimeStates, layerVisibilityStates, zoneRuntimeStates, zonePreviousRuntimeStates);
         this.inputState = inputState;
         classifyZones();
+
+        // DEBUG: Mostrar zonas de suelo encontradas
+        Gdx.app.log("Platformer", "Zonas floor: " + floorZoneIndices.size);
+        for (int i = 0; i < floorZoneIndices.size; i++) {
+            int idx = floorZoneIndices.get(i);
+            LevelData.LevelZone z = levelData.zones.get(idx);
+            Gdx.app.log("Platformer", "  Floor " + idx + ": x=" + z.x + " y=" + z.y + " w=" + z.width + " h=" + z.height);
+        }
+
         gemSpriteIndices = findSpriteIndicesByTypeOrName("gem");
         dragonSpriteIndices = findSpriteIndicesByTypeOrName("dragon");
+        potionSpriteIndices = findSpriteIndicesByTypeOrName("potion", "red_potion");
         dragonDeathDurationSeconds = resolveDragonDeathDurationSeconds();
-        onGround = isStandingOnFloor();
+
+        // Spawn sobre el floor (floor en serverY=181, worldHeight=192)
+        // La física trabaja en Y↓ igual que el servidor y las zonas del JSON
+        playerX = 160f;
+        playerY = 170f;
+        spawnX = playerX;
+        spawnY = playerY;
+
+        // Forzar onGround inicialmente
+        onGround = true;
+        velocityY = 0f;
+
         updatePlayerAnimationSelection();
         syncPlayerToSpriteRuntime();
     }
@@ -127,12 +151,12 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
 
         applyMovingFloorCarry();
 
-        boolean hasSupport = isStandingOnFloor();
-        if (hasSupport && velocityY >= 0f) {
+        // Verificar si está en el suelo antes de aplicar gravedad
+        boolean wasOnGround = onGround;
+        onGround = isStandingOnFloor();
+
+        if (onGround && velocityY >= 0f) {
             velocityY = 0f;
-            onGround = true;
-        } else if (!hasSupport) {
-            onGround = false;
         }
 
         if (jumpQueued && onGround) {
@@ -141,29 +165,31 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         }
         jumpQueued = false;
 
-        if (!onGround || velocityY < 0f) {
+        if (!onGround) {
             velocityY += GRAVITY_PER_SECOND_SQ * dtSeconds;
             if (velocityY > MAX_FALL_SPEED_PER_SECOND) {
                 velocityY = MAX_FALL_SPEED_PER_SECOND;
             }
         }
 
-        float previousY = playerY;
+        // Movimiento horizontal
         float previousX = playerX;
         playerX += velocityX * dtSeconds;
         resolveHorizontalCollisions(previousX);
 
+        // Movimiento vertical
+        float previousY = playerY;
         playerY += velocityY * dtSeconds;
         boolean landed = resolveVerticalCollisions(previousY);
-        boolean standingOnFloor = isStandingOnFloor();
-        if ((landed || standingOnFloor) && velocityY >= 0f) {
+
+        // Actualizar estado onGround después del movimiento
+        onGround = isStandingOnFloor();
+        if (onGround && velocityY > 0f) {
             velocityY = 0f;
-            onGround = true;
-        } else {
-            onGround = false;
         }
 
         collectTouchedGems();
+        collectTouchedPotions();
         handleDragonInteractions();
         if (!gameOver && isTouchingDeathZone()) {
             triggerGameOver();
@@ -173,18 +199,42 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         syncPlayerToSpriteRuntime();
     }
 
-    private void classifyZones() {
-        floorZoneIndices.clear();
-        solidZoneIndices.clear();
-        deathZoneIndices.clear();
+    private float findGroundBelow(float x, float startY) {
+        // Buscar zona floor/suelo debajo del jugador
         for (int i = 0; i < levelData.zones.size; i++) {
             LevelData.LevelZone zone = levelData.zones.get(i);
             String type = normalize(zone.type);
             String name = normalize(zone.name);
+            if (!containsAny(type, "floor") && !containsAny(name, "floor")) continue;
+
+            // ¿El jugador está horizontalmente dentro de esta zona?
+            if (x >= zone.x && x <= zone.x + zone.width) {
+                // Colocar al jugador justo encima del suelo
+                LevelRenderer.SpriteRuntimeState rs = playerState();
+                float halfH = rs.frameHeight * rs.anchorY;
+                return zone.y - halfH;
+            }
+        }
+        return startY; // sin suelo encontrado, dejar como está
+    }
+
+    private void classifyZones() {
+        floorZoneIndices.clear();
+        solidZoneIndices.clear();
+        deathZoneIndices.clear();
+
+        Gdx.app.log("Platformer", "Total zonas: " + levelData.zones.size);
+
+        for (int i = 0; i < levelData.zones.size; i++) {
+            LevelData.LevelZone zone = levelData.zones.get(i);
+            String type = normalize(zone.type);
+            String name = normalize(zone.name);
+
             if (containsAny(type, "death") || containsAny(name, "death")) {
                 deathZoneIndices.add(i);
                 continue;
             }
+
             boolean isFloor = containsAny(type, "floor", "platform") || containsAny(name, "floor", "platform");
             boolean isSolid = containsAny(type, "wall", "mur", "solid", "bloc", "block")
                 || containsAny(name, "wall", "mur", "solid", "bloc", "block");
@@ -192,11 +242,14 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
 
             if (isFloor) {
                 floorZoneIndices.add(i);
+                Gdx.app.log("Platformer", "Zona floor encontrada: " + i + " tipo=" + type + " nombre=" + name);
             }
             if (isSolid || isWallLikeFloor) {
                 solidZoneIndices.add(i);
             }
         }
+
+        Gdx.app.log("Platformer", "Total zonas floor: " + floorZoneIndices.size);
     }
 
     private void resolveHorizontalCollisions(float previousX) {
@@ -260,82 +313,34 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         }
 
         Rectangle playerRect = playerRect(rectCacheA);
-        Rectangle previousRect = playerRectAt(playerX, previousY, previousPlayerRectCache);
+        float playerBottom = playerRect.y + playerRect.height;
 
-        // One-way floor behavior:
-        // - Collide only when moving downward.
-        // - Ignore floor collisions while moving upward (jump-through from below).
-        if (velocityY <= 0f) {
-            return false;
-        }
+        Gdx.app.log("Platformer", String.format(
+            "resolveVerticalCollisions: playerY=%.1f previousY=%.1f playerBottom=%.1f",
+            playerY, previousY, playerBottom
+        ));
 
-        float previousBottom = previousRect.y + previousRect.height;
-        float currentBottom = playerRect.y + playerRect.height;
-        float playerBottomOffset = currentBottom - playerY;
-        float bestCrossDistance = Float.POSITIVE_INFINITY;
-        float bestLandingTop = Float.NaN;
+        boolean landed = false;
 
         for (int i = 0; i < floorZoneIndices.size; i++) {
             int zoneIndex = floorZoneIndices.get(i);
             Rectangle zoneRect = zoneRectAtIndex(zoneIndex, rectCacheB);
-            float zoneTop = zoneRect.y;
 
-            if (!overlapsHorizontallyForSweep(previousRect, playerRect, zoneRect)) {
-                continue;
-            }
-            if (!crossedZoneTop(previousBottom, currentBottom, zoneTop)) {
-                continue;
-            }
+            boolean horizontalOverlap = playerRect.x + playerRect.width > zoneRect.x &&
+                playerRect.x < zoneRect.x + zoneRect.width;
+            if (!horizontalOverlap) continue;
 
-            float crossDistance = zoneTop - previousBottom;
-            if (crossDistance < bestCrossDistance) {
-                bestCrossDistance = crossDistance;
-                bestLandingTop = zoneTop;
-            }
-        }
 
-        if (Float.isFinite(bestLandingTop)) {
-            playerY = bestLandingTop - playerBottomOffset;
-            velocityY = 0f;
-            return true;
-        }
-
-        // Fallback: if already penetrating near a floor top, push back upward.
-        float correctedY = playerY;
-        boolean landed = false;
-        for (int i = 0; i < 4; i++) {
-            Rectangle correctedRect = playerRectAt(playerX, correctedY, rectCacheA);
-            float maxPenetration = 0f;
-            for (int z = 0; z < floorZoneIndices.size; z++) {
-                int zoneIndex = floorZoneIndices.get(z);
-                Rectangle zoneRect = zoneRectAtIndex(zoneIndex, rectCacheB);
-                if (!overlapsHorizontallyForSweep(correctedRect, correctedRect, zoneRect)) {
-                    continue;
-                }
-                float zoneTop = zoneRect.y;
-                boolean crossedTop = correctedRect.y + correctedRect.height > zoneTop
-                    && correctedRect.y < zoneTop + 4f;
-                if (!crossedTop) {
-                    continue;
-                }
-                float penetration = correctedRect.y + correctedRect.height - zoneTop;
-                if (penetration > maxPenetration) {
-                    maxPenetration = penetration;
-                }
-            }
-            if (maxPenetration <= 0f) {
+            if (playerBottom >= zoneRect.y && playerBottom <= zoneRect.y + zoneRect.height + FLOOR_SUPPORT_DELTA) {
+                float oldY = playerY;
+                playerY = zoneRect.y - playerRect.height + (playerY - playerRect.y);
+                velocityY = 0f;
+                landed = true;
                 break;
             }
-            correctedY -= maxPenetration + 0.01f;
-            landed = true;
         }
 
-        if (landed) {
-            playerY = correctedY;
-            velocityY = 0f;
-            return true;
-        }
-        return false;
+        return landed;
     }
 
     private boolean isStandingOnFloor() {
@@ -344,22 +349,37 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         }
 
         Rectangle playerRect = playerRect(rectCacheA);
-        float testBottom = playerRect.y + playerRect.height + 0.5f;
-        float testLeft = playerRect.x;
-        float testRight = playerRect.x + playerRect.width;
+        float playerBottom = playerRect.y + playerRect.height;
+
 
         for (int i = 0; i < floorZoneIndices.size; i++) {
             int zoneIndex = floorZoneIndices.get(i);
             Rectangle zoneRect = zoneRectAtIndex(zoneIndex, rectCacheB);
-            boolean overlapsHorizontally = testRight > zoneRect.x && testLeft < zoneRect.x + zoneRect.width;
-            if (!overlapsHorizontally) {
+
+
+            // Verificar solapamiento horizontal
+            boolean horizontalOverlap = playerRect.x + playerRect.width > zoneRect.x &&
+                playerRect.x < zoneRect.x + zoneRect.width;
+
+            if (!horizontalOverlap) {
                 continue;
             }
-            float bottomDelta = Math.abs(testBottom - zoneRect.y);
-            if (bottomDelta <= FLOOR_SUPPORT_DELTA) {
+
+            // Verificar si el jugador está sobre el suelo
+            float distanceToFloor = playerBottom - zoneRect.y;
+
+            // El jugador está sobre el suelo si la distancia es pequeña
+            if (Math.abs(distanceToFloor) <= FLOOR_SUPPORT_DELTA) {
+                return true;
+            }
+
+            // O si está ligeramente dentro del suelo
+            if (distanceToFloor > 0 && distanceToFloor < FLOOR_SUPPORT_DELTA * 2) {
                 return true;
             }
         }
+
+        Gdx.app.log("Platformer", "  -> NOT on ground");
         return false;
     }
 
@@ -402,6 +422,33 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
 
         if (gemSpriteIndices.size > 0 && collectedGemSpriteIndices.size >= gemSpriteIndices.size) {
             triggerWin();
+        }
+    }
+
+    private void collectTouchedPotions() {
+        if (potionSpriteIndices == null || potionSpriteIndices.size <= 0) {
+            return;
+        }
+
+        for (int i = 0; i < potionSpriteIndices.size; i++) {
+            int spriteIndex = potionSpriteIndices.get(i);
+            if (collectedPotionSpriteIndices.contains(spriteIndex)) continue;
+            if (spriteIndex < 0 || spriteIndex >= spriteRuntimeStates.size) continue;
+            LevelRenderer.SpriteRuntimeState runtime = spriteRuntimeStates.get(spriteIndex);
+            if (!runtime.visible) continue;
+            if (spritesOverlapByHitBoxes(
+                playerSpriteIndex,
+                playerX,
+                playerY,
+                spriteIndex,
+                runtime.worldX,
+                runtime.worldY
+            )) {
+                collectedPotionSpriteIndices.add(spriteIndex);
+                setSpriteVisible(spriteIndex, false);
+                // Simple effect: restore some life
+                lifePercent = Math.min(START_LIFE_PERCENT, lifePercent + 20f);
+            }
         }
     }
 
@@ -578,11 +625,13 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
         nextDragonDamageSecondsBySprite.clear();
         expiredDragonDamageSpriteIndices.clear();
         collectedGemSpriteIndices.clear();
+        collectedPotionSpriteIndices.clear();
         removedDragonSpriteIndices.clear();
         dragonDeathStartSecondsBySprite.clear();
         completedDragonDeathSpriteIndices.clear();
         restoreSpritesVisible(gemSpriteIndices);
         restoreSpritesVisible(dragonSpriteIndices);
+        if (potionSpriteIndices != null) restoreSpritesVisible(potionSpriteIndices);
         clearAnimationOverrides(dragonSpriteIndices);
         setPlayerFlip(false, false);
         updatePlayerAnimationSelection();
@@ -680,20 +729,41 @@ public final class GameplayControllerPlatformer extends GameplayControllerBase {
 
         final float verticalThreshold = 5f;
         final float moveThreshold = 2f;
-        String animationName;
+        String base = normalize(playerSprite().name);
+        if (base == null || base.isEmpty()) base = normalize(playerSprite().type);
 
-        if (!onGround) {
-            // Saltando o cayendo
-            animationName = "jump_cat"; // Usará jump_cat1, jump_cat2, etc.
-        } else if (Math.abs(velocityX) > moveThreshold) {
-            // Caminando
-            animationName = "run_cat"; // Usará run_cat1, run_cat2, etc.
+        String animationName = null;
+        if (base != null && base.startsWith("cat")) {
+            if (!onGround) {
+                animationName = "jump_" + base;
+            } else if (Math.abs(velocityX) > moveThreshold) {
+                animationName = "run_" + base;
+            } else {
+                animationName = "idle_" + base;
+            }
         } else {
-            // Quieto
-            animationName = "idle_cat"; // Usará idle_cat1, idle_cat2, etc.
+            // Fallback para Foxy
+            animationName = "Foxy Idle";
+            if (!onGround) {
+                if (velocityY < -verticalThreshold) {
+                    animationName = "Foxy Jump Up";
+                } else {
+                    animationName = "Foxy Jump Fall";
+                }
+            } else if (Math.abs(velocityX) > moveThreshold) {
+                animationName = "Foxy Walk";
+            }
         }
 
         setPlayerFlip(!facingRight, false);
         setPlayerAnimationOverrideByName(animationName);
+
+        // Forzar actualización inmediata del sprite runtime
+        if (hasPlayer()) {
+            String animId = findAnimationIdByName(animationName);
+            if (animId != null) {
+                playerState().animationId = animId;
+            }
+        }
     }
 }
