@@ -910,8 +910,16 @@ public class PlayScreen extends ScreenAdapter {
 
     private void updateAnimations(float delta) {
         for (int i = 0; i < levelData.sprites.size; i++) {
+            if (isRemotePlayerSprite(i)) continue;
             updateSpriteAnim(levelData.sprites.get(i), spriteRuntimeStates.get(i), i, delta);
         }
+    }
+
+    private boolean isRemotePlayerSprite(int idx) {
+        for (ObjectMap.Entry<String, Integer> e : playerToCatSprite.entries()) {
+            if (e.value != null && e.value == idx) return true;
+        }
+        return false;
     }
 
     private void updateSpriteAnim(LevelData.LevelSprite sprite, LevelRenderer.SpriteRuntimeState rs, int idx, float dt) {
