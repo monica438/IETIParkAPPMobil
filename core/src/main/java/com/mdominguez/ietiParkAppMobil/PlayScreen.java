@@ -406,12 +406,12 @@ public class PlayScreen extends ScreenAdapter {
                 break;
             case "DOOR_STATE":
                 // El servidor gestiona las puertas; el cliente solo las registra
-                // (la lógica de renderizado de puertas queda pendiente de implementar)
                 Gdx.app.log("PlayScreen", "DOOR_STATE recibido");
                 break;
             case "JOIN_OK":
                 String newPlayer = payload.getString("nickname", "");
                 if (!newPlayer.isEmpty() && !newPlayer.equals(myNickname)) {
+                    Gdx.app.log("PlayScreen", "Nuevo jugador: " + newPlayer);
                     addRemotePlayer(newPlayer);
                 }
                 game.getWsClient().sendGetPlayers();
@@ -423,13 +423,13 @@ public class PlayScreen extends ScreenAdapter {
         JsonValue playersArray = payload.get("players");
         if (playersArray == null) return;
 
+        // Marcar todos como no vistos
         for (RemotePlayer rp : remotePlayers.values()) {
             rp.tempFlag = false;
         }
 
-        // First pass: mark existing players as present
+        // Actualizar lista de jugadores
         for (JsonValue item = playersArray.child; item != null; item = item.next) {
-            // CORRECCIÓN: item es un objeto con campos "nickname" y "cat"
             String nickname = item.getString("nickname", "");
             String cat = item.getString("cat", "");
 
@@ -440,68 +440,92 @@ public class PlayScreen extends ScreenAdapter {
                 rp = new RemotePlayer(nickname);
                 remotePlayers.put(nickname, rp);
             }
-            rp.cat = cat;  // Guardar el gato asignado
+            rp.cat = cat;  // Guardar el gato asignado por el servidor
             rp.tempFlag = true;
         }
 
-        // Remove disconnected players and free their assigned sprites
+        // Eliminar jugadores desconectados
         Array<String> toRemove = new Array<>();
         for (ObjectMap.Entry<String, RemotePlayer> entry : remotePlayers.entries()) {
             if (!entry.value.tempFlag) {
-                Integer spriteIdx = playerToCatSprite.remove(entry.key);
                 toRemove.add(entry.key);
             }
         }
-        for (String nick : toRemove) {
-            Integer spriteIdx = playerToCatSprite.remove(nick);
-            if (spriteIdx != null && spriteIdx >= 0
-                && spriteIdx < spriteRuntimeStates.size
-                && spriteIdx != localPlayerCatIndex) {
-                LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(spriteIdx);
-                rs.visible = false;
-                rs.worldX = 160f;
-                rs.worldY = 170f;
-            }
-            remotePlayers.remove(nick);
-        }
 
-        // Assign available cat sprites to new players SEQUENTIALLY
-        int nextCatIndex = 0;
-        for (ObjectMap.Entry<String, RemotePlayer> entry : remotePlayers.entries()) {
-            if (!playerToCatSprite.containsKey(entry.key)) {
-                // Assign next available cat in sequence
-                if (nextCatIndex < catSpriteIndices.size) {
-                    int catIdx = catSpriteIndices.get(nextCatIndex);
-                    playerToCatSprite.put(entry.key, catIdx);
-                    syncSpriteToPlayer(entry.key, entry.value);
-                    nextCatIndex++;
-                }
-            } else {
-                nextCatIndex++;  // Skip already-assigned cats
-            }
-        }
-
-        /*
-        // En handlePlayerList, dentro del bucle de toRemove, antes de remotePlayers.remove():
         for (String nick : toRemove) {
+            // Ocultar el sprite del gato que estaba usando
             Integer spriteIdx = playerToCatSprite.get(nick);
-            if (spriteIdx != null && spriteIdx >= 0
-                    && spriteIdx < spriteRuntimeStates.size
-                    && spriteIdx != localPlayerCatIndex) {
-                spriteRuntimeStates.get(spriteIdx).visible = false; // ← ocultar al desconectar
+            if (spriteIdx != null && spriteIdx >= 0 && spriteIdx < spriteRuntimeStates.size) {
+                spriteRuntimeStates.get(spriteIdx).visible = false;
             }
             playerToCatSprite.remove(nick);
             remotePlayers.remove(nick);
         }
-         */
+
+        // Asignar sprites basados en el gato del servidor
+        updateCatSpriteMappings();
     }
+
+        private void updateCatSpriteMappings() {
+        playerToCatSprite.clear();
+
+        // Primero, mapear el gato local
+        String myCat = game.getSelectedCat();
+        if (myCat != null) {
+            for (int i = 0; i < levelData.sprites.size; i++) {
+                LevelData.LevelSprite sprite = levelData.sprites.get(i);
+                if (normalize(sprite.name).equals(normalize(myCat)) ||
+                    normalize(sprite.type).equals(normalize(myCat))) {
+                    localPlayerCatIndex = i;
+                    if (i < spriteRuntimeStates.size) {
+                        spriteRuntimeStates.get(i).visible = true;
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Luego, mapear los gatos remotos
+        for (ObjectMap.Entry<String, RemotePlayer> entry : remotePlayers.entries()) {
+            String remoteNick = entry.key;
+            String remoteCat = entry.value.cat;
+
+            if (remoteCat == null) continue;
+
+            // Buscar el sprite que corresponde al gato
+            for (int i = 0; i < levelData.sprites.size; i++) {
+                LevelData.LevelSprite sprite = levelData.sprites.get(i);
+                if (i == localPlayerCatIndex) continue; // No usar el gato local
+
+                if (normalize(sprite.name).equals(normalize(remoteCat)) ||
+                    normalize(sprite.type).equals(normalize(remoteCat))) {
+                    playerToCatSprite.put(remoteNick, i);
+
+                    // Actualizar el estado del sprite
+                    if (i < spriteRuntimeStates.size) {
+                        LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(i);
+                        rs.visible = entry.value.hasPosition;
+                        if (entry.value.hasPosition) {
+                            rs.worldX = entry.value.x;
+                            rs.worldY = entry.value.y;
+                            rs.flipX = entry.value.flipX;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     private void handleRemoteMove(JsonValue payload) {
         String nickname = payload.getString("nickname", "");
-        String dir      = payload.getString("dir",      "RIGHT");
-        float  x        = payload.getFloat("x",         -1f);
-        float  y        = payload.getFloat("y",         -1f);
-        String anim     = payload.getString("anim",     "");
-        int    frame    = payload.getInt("frame",        0);
+        String cat = payload.getString("cat", "");
+        String dir = payload.getString("dir", "RIGHT");
+        float x = payload.getFloat("x", -1f);
+        float y = payload.getFloat("y", -1f);
+        String anim = payload.getString("anim", "");
+        int frame = payload.getInt("frame", 0);
+        boolean flipX = payload.getBoolean("flipX", "LEFT".equals(dir));
 
         if (nickname.equals(myNickname)) return;
 
@@ -511,45 +535,36 @@ public class PlayScreen extends ScreenAdapter {
             remotePlayers.put(nickname, rp);
         }
 
+        rp.cat = cat;  // Actualizar el gato
         rp.direction = dir;
-        rp.flipX     = "LEFT".equals(dir);
-        if (x >= 0) { rp.x = x; rp.y = y; rp.hasPosition = true; }
-
-        // Si es el jugador local, reconciliar posición con el servidor
-        if (nickname.equals(myNickname)) {
-            if (x >= 0 && localPlayerCatIndex >= 0 && localPlayerCatIndex < spriteRuntimeStates.size) {
-                LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(localPlayerCatIndex);
-                rs.worldX = rp.x;
-                rs.worldY = rp.y;
-            }
-            return;
+        rp.flipX = flipX;
+        if (x >= 0) {
+            rp.x = x;
+            rp.y = y;
+            rp.hasPosition = true;
         }
 
-        // Aplicar al sprite asignado solo si ya tiene posición válida
+        // Actualizar el sprite correcto
+        updateCatSpriteMappings();
+
+        // Aplicar animación si viene informada
         Integer spriteIdx = playerToCatSprite.get(nickname);
-        if (spriteIdx != null && spriteIdx != localPlayerCatIndex
-            && spriteIdx >= 0 && spriteIdx < spriteRuntimeStates.size
-            && rp.hasPosition) {
+        if (spriteIdx != null && spriteIdx >= 0 && spriteIdx < spriteRuntimeStates.size) {
             LevelRenderer.SpriteRuntimeState rs = spriteRuntimeStates.get(spriteIdx);
-            rs.worldX   = rp.x;
-            rs.worldY   = rp.y;
-            rs.flipX    = rp.flipX;
-            rs.visible  = true;
-            rs.frameIndex = frame;
-            // Cambiar animación si viene informada
             if (!anim.isEmpty()) {
                 // Buscar el animationId por nombre
-                for (ObjectMap.Entry<String, LevelData.AnimationClip> entry
-                    : levelData.animationClips.entries()) {
+                for (ObjectMap.Entry<String, LevelData.AnimationClip> entry : levelData.animationClips.entries()) {
                     if (anim.equals(entry.value.name)) {
-                        rs.animationId  = entry.key;
-                        rs.texturePath  = entry.value.texturePath;
-                        rs.frameWidth   = entry.value.frameWidth;
-                        rs.frameHeight  = entry.value.frameHeight;
+                        rs.animationId = entry.key;
+                        rs.texturePath = entry.value.texturePath;
+                        rs.frameWidth = entry.value.frameWidth;
+                        rs.frameHeight = entry.value.frameHeight;
                         break;
                     }
                 }
             }
+            rs.frameIndex = frame;
+            rs.visible = true;
         }
     }
 
@@ -704,46 +719,22 @@ public class PlayScreen extends ScreenAdapter {
     }
 
     private void discoverCatSprites() {
-        catSpriteIndices.clear();
-        playerToCatSprite.clear();
-        localPlayerCatIndex = -1;
+                catSpriteIndices.clear();
 
-        String myCat = game.getSelectedCat();
-
+        // Encontrar todos los sprites de gato
         for (int i = 0; i < levelData.sprites.size; i++) {
             LevelData.LevelSprite sprite = levelData.sprites.get(i);
             String name = normalize(sprite.name);
             String type = normalize(sprite.type);
 
             if (name.contains("cat") || type.contains("cat")) {
-                if (localPlayerCatIndex == -1
-                    && myCat != null
-                    && (name.equals(normalize(myCat)) || type.equals(normalize(myCat)))) {
-                    localPlayerCatIndex = i;
-                    // Solo el gato local es visible al inicio
-                    if (i < spriteRuntimeStates.size) {
-                        spriteRuntimeStates.get(i).visible = true;
-                    }
-                } else {
-                    catSpriteIndices.add(i);
-                    // Gatos remotos: ocultos hasta que se asigne un jugador
-                    if (i < spriteRuntimeStates.size) {
-                        spriteRuntimeStates.get(i).visible = false;
-                    }
+                catSpriteIndices.add(i);
+                // Inicialmente ocultar todos
+                if (i < spriteRuntimeStates.size) {
+                    spriteRuntimeStates.get(i).visible = false;
                 }
             }
         }
-
-        if (localPlayerCatIndex == -1 && catSpriteIndices.size > 0) {
-            localPlayerCatIndex = catSpriteIndices.removeIndex(0);
-            if (localPlayerCatIndex < spriteRuntimeStates.size) {
-                spriteRuntimeStates.get(localPlayerCatIndex).visible = true;
-            }
-        }
-
-        Gdx.app.log("CATS", "myCat=" + myCat
-            + " localPlayerCatIndex=" + localPlayerCatIndex
-            + " remoteCats=" + catSpriteIndices.size);
     }
 
     private void createRemotePlayerTexture() {

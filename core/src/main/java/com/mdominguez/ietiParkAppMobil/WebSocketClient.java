@@ -13,18 +13,6 @@ import com.github.czyzby.websocket.WebSocketAdapter;
 import com.github.czyzby.websocket.WebSocketHandler;
 import com.github.czyzby.websocket.WebSockets;
 
-/**
- * Cliente → Servidor:
- *   { "type": "JOIN",        "nickname": "xxx" }
- *   { "type": "MOVE",        "direction": "UP|LEFT|RIGHT", "timestamp": 123 }
- *   { "type": "GET_PLAYERS" }
- *
- * Servidor → Cliente:
- *   { "type": "WELCOME",     "msg": "..." }
- *   { "type": "JOIN_OK",     "nickname": "xxx" }
- *   { "type": "PLAYER_LIST", "players": ["p1","p2"] }
- *   { "type": "MOVE",        "nickname": "xxx", "direction": "UP", ... }
- */
 public class WebSocketClient {
 
     // ==================== INTERFACES ====================
@@ -37,43 +25,39 @@ public class WebSocketClient {
         void onMessage(String type, JsonValue payload);
     }
 
-    /** Notifica cambios en el estado de la conexión. */
     public interface ConnectionListener {
-        /** @param connected true = conectado, false = desconectado */
         void onConnectionStateChanged(boolean connected);
     }
 
     // ==================== CONSTANTES DE RECONEXIÓN ====================
 
-    private static final String SERVER_URL        = "wss://pico2.ieti.site";
-    //private static final String SERVER_URL = "ws://10.0.2.2:8080"; // Descomentar si queremos localhost
-    private static final float  RECONNECT_DELAY_MIN = 1f;   // segundos inicial
-    private static final float  RECONNECT_DELAY_MAX = 30f;  // segundos máximo
-    private static final float  RECONNECT_DELAY_FACTOR = 2f; // multiplicador (backoff exponencial)
+    private static final String SERVER_URL = "wss://pico2.ieti.site";
+    //private static final String SERVER_URL = "ws://10.0.2.2:8080";
+    private static final float RECONNECT_DELAY_MIN = 1f;
+    private static final float RECONNECT_DELAY_MAX = 30f;
+    private static final float RECONNECT_DELAY_FACTOR = 2f;
 
     // ==================== CAMPOS ====================
 
     private WebSocket socket;
-    private boolean connected      = false;
-    private boolean intentionallyClosed = false; // true cuando el usuario llama a close()
-    private boolean reconnecting   = false;
+    private boolean connected = false;
+    private boolean intentionallyClosed = false;
+    private boolean reconnecting = false;
 
     private float reconnectDelayCurrent = RECONNECT_DELAY_MIN;
-    private float reconnectTimer        = 0f;
+    private float reconnectTimer = 0f;
 
     private String confirmedNickname = null;
+    private String confirmedCat = null;  // Se asigna en JOIN_OK, NO en WELCOME
+    private int availableCatsCount = 0;  // Se actualiza en WELCOME
     private final List<String> activePlayers = new ArrayList<>();
+    private final Map<String, String> activePlayerCats = new HashMap<>();
     private final JsonReader jsonReader = new JsonReader();
     private final java.util.Queue<String> pendingMessages = new java.util.ArrayDeque<>();
 
     private PlayerListListener playerListListener;
-    private MessageListener    messageListener;
+    private MessageListener messageListener;
     private ConnectionListener connectionListener;
-
-    private String confirmedCat = null;
-
-    private final Map<String, String> activePlayerCats = new HashMap<>();
-
 
     // ==================== SETTERS DE LISTENERS ====================
 
@@ -89,10 +73,24 @@ public class WebSocketClient {
         this.connectionListener = listener;
     }
 
+    // ==================== GETTERS ====================
+
+    public boolean isConnected() { return connected; }
+    public boolean isReconnecting() { return reconnecting; }
+    public String getConfirmedNickname() { return confirmedNickname; }
     public String getConfirmedCat() { return confirmedCat; }
+    public int getAvailableCatsCount() { return availableCatsCount; }
+    public List<String> getActivePlayers() { return new ArrayList<>(activePlayers); }
 
     public Map<String, String> getActivePlayerCats() {
         return new HashMap<>(activePlayerCats);
+    }
+
+    public float getReconnectDelay() { return reconnectDelayCurrent; }
+
+    public float getReconnectProgress() {
+        if (!reconnecting || reconnectDelayCurrent <= 0f) return 0f;
+        return Math.min(reconnectTimer / reconnectDelayCurrent, 1f);
     }
 
     // ==================== CONEXIÓN ====================
@@ -105,7 +103,6 @@ public class WebSocketClient {
     }
 
     private void doConnect() {
-        // Cerrar socket anterior si existe
         if (socket != null) {
             try { WebSockets.closeGracefully(socket); } catch (Exception ignored) {}
             socket = null;
@@ -122,8 +119,8 @@ public class WebSocketClient {
             public boolean onOpen(WebSocket webSocket) {
                 connected = true;
                 reconnecting = false;
-                reconnectDelayCurrent = RECONNECT_DELAY_MIN; // reset backoff
-                Gdx.app.log("WebSocketClient", "Conectado al servidor");
+                reconnectDelayCurrent = RECONNECT_DELAY_MIN;
+                Gdx.app.log("WebSocketClient", "✅ Conectado al servidor");
 
                 // Reenviar mensajes pendientes
                 try {
@@ -131,7 +128,7 @@ public class WebSocketClient {
                         String m = pendingMessages.poll();
                         if (m == null) break;
                         webSocket.send(m);
-                        Gdx.app.log("WebSocketClient", "Enviado (pendiente): " + m);
+                        Gdx.app.log("WebSocketClient", "📤 Enviado (pendiente): " + m);
                     }
                 } catch (Exception e) {
                     Gdx.app.error("WebSocketClient", "Error al enviar mensajes pendientes", e);
@@ -144,7 +141,7 @@ public class WebSocketClient {
             @Override
             public boolean onClose(WebSocket webSocket, int code, String reason) {
                 connected = false;
-                Gdx.app.log("WebSocketClient", "Desconectado (code=" + code + "): " + reason);
+                Gdx.app.log("WebSocketClient", "🔌 Desconectado (code=" + code + "): " + reason);
                 notifyConnectionState(false);
 
                 if (!intentionallyClosed) {
@@ -162,7 +159,6 @@ public class WebSocketClient {
             @Override
             public boolean onError(WebSocket webSocket, Throwable error) {
                 Gdx.app.error("WebSocketClient", "Error WS: " + error.getMessage());
-                // onClose se disparará a continuación, que gestiona la reconexión
                 return WebSocketHandler.FULLY_HANDLED;
             }
         });
@@ -170,11 +166,6 @@ public class WebSocketClient {
         socket.connect();
     }
 
-    /**
-     * Debe llamarse desde el game loop (render) para que el timer de
-     * reconexión funcione sin necesitar threads adicionales.
-     * Llámalo desde GameApp.render() o desde PlayScreen/MenuScreen.render().
-     */
     public void update(float delta) {
         if (!reconnecting || intentionallyClosed) return;
 
@@ -185,7 +176,6 @@ public class WebSocketClient {
             Gdx.app.log("WebSocketClient",
                 "Intentando reconectar (próximo intervalo: "
                     + Math.min(reconnectDelayCurrent * RECONNECT_DELAY_FACTOR, RECONNECT_DELAY_MAX) + "s)...");
-            // Aumentar el delay para el siguiente intento (backoff exponencial)
             reconnectDelayCurrent = Math.min(
                 reconnectDelayCurrent * RECONNECT_DELAY_FACTOR,
                 RECONNECT_DELAY_MAX
@@ -202,64 +192,107 @@ public class WebSocketClient {
             "Reconexión programada en " + reconnectDelayCurrent + "s");
     }
 
-    // ==================== MANEJO DE MENSAJES ====================
+    // ==================== MANEJO DE MENSAJES DEL SERVIDOR ====================
 
     private void handleMessage(String payload) {
         JsonValue root;
         try {
             root = jsonReader.parse(payload);
         } catch (Exception e) {
-            Gdx.app.error("WebSocketClient", "JSON inválido: " + payload);
+            Gdx.app.error("WebSocketClient", "❌ JSON inválido: " + payload);
             return;
         }
 
         String type = root.getString("type", "");
+        Gdx.app.log("WebSocketClient", "📩 Recibido: " + type);
 
         switch (type) {
-            case "WELCOME":
-                if (confirmedNickname != null && !confirmedNickname.isEmpty()
-                    && confirmedCat != null && !confirmedCat.isEmpty()) {
-                    sendJoin(confirmedNickname, confirmedCat);
+            case "WELCOME": {
+                // SOLO mensaje de bienvenida, NO asigna gato
+                String msg = root.getString("msg", "");
+                availableCatsCount = root.getInt("availableCats", 0);
+                Gdx.app.log("WebSocketClient", "👋 WELCOME: " + msg + " (gatos disponibles: " + availableCatsCount + ")");
+
+                // Si ya teníamos un nickname confirmado (reconexión), reenviar JOIN
+                if (confirmedNickname != null && !confirmedNickname.isEmpty()) {
+                    Gdx.app.log("WebSocketClient", "Reconexión detectada, reenviando JOIN para " + confirmedNickname);
+                    sendJoin(confirmedNickname);
                 }
                 break;
+            }
 
-            case "JOIN_OK":
+            case "JOIN_OK": {
+                // AQUÍ es donde el servidor nos asigna el gato
                 confirmedNickname = root.getString("nickname", "");
-                confirmedCat      = root.getString("cat", "");  // ← guardar cat confirmado
+                confirmedCat = root.getString("cat", "");
+                Gdx.app.log("WebSocketClient", "✅ JOIN_OK: nickname=" + confirmedNickname + ", cat=" + confirmedCat);
                 notifyMessageListener(type, root);
                 break;
+            }
 
-            case "PLAYER_LIST":
+            case "JOIN_ERROR": {
+                // El servidor rechaza nuestro registro (no hay gatos disponibles)
+                String msg = root.getString("msg", "Error desconocido");
+                Gdx.app.error("WebSocketClient", "❌ JOIN_ERROR: " + msg);
+                confirmedNickname = null;
+                confirmedCat = null;
+                notifyMessageListener(type, root);
+                break;
+            }
+
+            case "PLAYER_LIST": {
+                // El servidor nos envía la lista de jugadores con sus gatos
                 JsonValue playersArray = root.get("players");
                 activePlayers.clear();
-                activePlayerCats.clear(); // ← nuevo Map<String,String>
+                activePlayerCats.clear();
+
                 if (playersArray != null) {
                     for (JsonValue item = playersArray.child; item != null; item = item.next) {
                         String nick = item.getString("nickname", "");
-                        String cat  = item.getString("cat", "");
+                        String cat = item.getString("cat", "");
                         if (!nick.isEmpty()) {
                             activePlayers.add(nick);
-                            activePlayerCats.put(nick, cat);
+                            if (cat != null && !cat.isEmpty()) {
+                                activePlayerCats.put(nick, cat);
+                            }
                         }
                     }
                 }
+
+                Gdx.app.log("WebSocketClient", "👥 PLAYER_LIST: " + activePlayers.size() + " jugadores");
                 notifyPlayerList();
                 notifyMessageListener(type, root);
                 break;
+            }
 
-            case "MOVE":
+            case "MOVE": {
+                // Otro jugador se ha movido
                 String nick = root.getString("nickname", "?");
-                String direction = root.getString("dir", "?"); // ← "dir" no "direction"
-                Gdx.app.log("WebSocketClient", "MOVE de " + nick + ": " + direction);
-                notifyMessageListener(type, root);
-                break;
+                String cat = root.getString("cat", "");
+                String dir = root.getString("dir", "?");
 
-            case "DOOR_STATE":
+                Gdx.app.log("WebSocketClient",
+                    "🏃 MOVE: " + nick + " (gato=" + cat + ") -> " + dir);
                 notifyMessageListener(type, root);
                 break;
+            }
+
+            case "PONG": {
+                // Respuesta del servidor a nuestro PING
+                Gdx.app.log("WebSocketClient", "💓 PONG recibido");
+                break;
+            }
+
+            case "ERROR": {
+                // Error genérico del servidor
+                String msg = root.getString("msg", "Error desconocido");
+                Gdx.app.error("WebSocketClient", "⚠️ ERROR del servidor: " + msg);
+                notifyMessageListener(type, root);
+                break;
+            }
 
             default:
-                Gdx.app.log("WebSocketClient", "Tipo de mensaje desconocido: " + type);
+                Gdx.app.log("WebSocketClient", "❓ Tipo de mensaje desconocido: " + type);
                 break;
         }
     }
@@ -274,7 +307,7 @@ public class WebSocketClient {
 
     private void notifyMessageListener(String type, JsonValue payload) {
         if (messageListener == null) return;
-        final String typeCopy    = type;
+        final String typeCopy = type;
         final String payloadCopy = payload.toString();
         Gdx.app.postRunnable(() -> {
             try {
@@ -293,36 +326,32 @@ public class WebSocketClient {
 
     // ==================== MENSAJES SALIENTES ====================
 
-    public void sendJoin(String nickname, String cat) {
+    public void sendJoin(String nickname) {
         send("{\"type\":\"JOIN\","
             + "\"nickname\":\"" + escapeJson(nickname) + "\","
-            + "\"cat\":\"" + escapeJson(cat) + "\"}");
-    }
-
-    // Lo implementaremos si no nos funciona el cambio en el server para detectar conexiones muertas
-    public void sendResetPlayers() {
-        send("{\"type\":\"RESET_PLAYERS\"}");
+            + "\"cat\":\"\"}");  // Enviamos vacío, el servidor asigna
+        Gdx.app.log("WebSocketClient", "📤 JOIN: " + nickname);
     }
 
     public void sendLeave() {
         if (confirmedNickname != null && !confirmedNickname.isEmpty()) {
-            // Enviamos de forma síncrona y directa, sin encolar,
-            // porque justo después nos desconectamos
             String msg = "{\"type\":\"LEAVE\",\"nickname\":\""
                 + escapeJson(confirmedNickname) + "\"}";
             if (socket != null && connected) {
                 try {
                     socket.send(msg);
-                    Gdx.app.log("WebSocketClient", "LEAVE enviado: " + confirmedNickname);
+                    Gdx.app.log("WebSocketClient", "📤 LEAVE: " + confirmedNickname);
                 } catch (Exception e) {
                     Gdx.app.error("WebSocketClient", "Error enviando LEAVE", e);
                 }
             }
-            confirmedNickname = null; // limpiar nick local
+            confirmedNickname = null;
+            confirmedCat = null;
         }
     }
 
     public void sendMove(String dir, float x, float y, String anim, int frame) {
+        // El servidor añadirá automáticamente el nickname y cat al broadcast
         send("{\"type\":\"MOVE\","
             + "\"dir\":\"" + escapeJson(dir) + "\","
             + "\"x\":" + (int)x + ","
@@ -333,6 +362,14 @@ public class WebSocketClient {
 
     public void sendGetPlayers() {
         send("{\"type\":\"GET_PLAYERS\"}");
+    }
+
+    public void sendResetPlayers() {
+        send("{\"type\":\"RESET_PLAYERS\"}");
+    }
+
+    public void sendPing() {
+        send("{\"type\":\"PING\"}");
     }
 
     private void send(String message) {
@@ -346,12 +383,13 @@ public class WebSocketClient {
         } else {
             pendingMessages.add(message);
             Gdx.app.log("WebSocketClient", "Sin conexión, encolado: " + message);
-            // Si no estamos ya intentando reconectar, programar una reconexión
             if (!reconnecting && !intentionallyClosed) {
                 scheduleReconnect();
             }
         }
     }
+
+    // ==================== UTILIDADES ====================
 
     private String escapeJson(String s) {
         if (s == null) return "";
@@ -360,22 +398,6 @@ public class WebSocketClient {
             .replace("\n", "\\n")
             .replace("\r", "\\r")
             .replace("\t", "\\t");
-    }
-
-    // ==================== GETTERS ====================
-
-    public boolean isConnected()           { return connected; }
-    public boolean isReconnecting()        { return reconnecting; }
-    public String  getConfirmedNickname()  { return confirmedNickname; }
-    public List<String> getActivePlayers() { return new ArrayList<>(activePlayers); }
-
-    /** Devuelve el delay actual de reconexión en segundos (útil para mostrar en UI). */
-    public float getReconnectDelay()       { return reconnectDelayCurrent; }
-
-    /** Progreso [0..1] del timer de reconexión actual (útil para barra de progreso). */
-    public float getReconnectProgress() {
-        if (!reconnecting || reconnectDelayCurrent <= 0f) return 0f;
-        return Math.min(reconnectTimer / reconnectDelayCurrent, 1f);
     }
 
     // ==================== CIERRE ====================

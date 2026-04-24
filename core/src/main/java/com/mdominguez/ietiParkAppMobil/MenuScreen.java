@@ -65,8 +65,6 @@ public class MenuScreen extends ScreenAdapter implements WebSocketClient.PlayerL
     private final Rectangle fieldRect = new Rectangle();
     private final Rectangle playRect  = new Rectangle();
 
-    private String selectedCat = null;
-
     private final InputAdapter inputAdapter = new InputAdapter() {
 
         @Override
@@ -143,6 +141,7 @@ public class MenuScreen extends ScreenAdapter implements WebSocketClient.PlayerL
             String confirmedCat  = payload.getString("cat", "");
             game.setPlayerNickname(confirmedNick);
             game.setSelectedCat(confirmedCat); // ← guardar gato confirmado
+            Gdx.app.log("MenuScreen", "JOIN_OK: " + confirmedNick + " con gato " + confirmedCat);
             Gdx.app.postRunnable(() -> game.setScreen(new LoadingScreen(game, 0)));
             waitingForJoin = false;
         }
@@ -245,26 +244,41 @@ public class MenuScreen extends ScreenAdapter implements WebSocketClient.PlayerL
             drawCentered(batch, font, displayText, fieldRect.y + fieldRect.height * 0.65f, 1.8f, FIELD_ACTIVE);
         }
 
-        boolean salaLlena = pickAvailableCat() == null;
+        // AHORA USAMOS getAvailableCatsCount() del WebSocketClient
+        boolean salaLlena = game.getWsClient().getAvailableCatsCount() <= 0 && connected;
 
         String buttonText;
-        if (waitingForJoin)  buttonText = "CONECTANDO...";
-        else if (salaLlena)  buttonText = "SALA LLENA";
-        else                 buttonText = "PLAY";
+        if (waitingForJoin) {
+            buttonText = "CONECTANDO...";
+        } else if (!connected) {
+            buttonText = "SIN CONEXIÓN";
+        } else if (salaLlena) {
+            buttonText = "SALA LLENA";
+        } else {
+            buttonText = "PLAY";
+        }
 
-        Color buttonColor = salaLlena ? DIM : PRIMARY;
+        Color buttonColor = (salaLlena || !connected) ? DIM : PRIMARY;
         drawCentered(batch, font, buttonText,
             playRect.y + playRect.height * 0.65f, 2.0f, buttonColor);
 
-        float playersTopY = playRect.y - 40f;
+        // Mostrar gatos disponibles
+        if (connected) {
+            int availableCats = game.getWsClient().getAvailableCatsCount();
+            String catsText = "Gatos disponibles: " + availableCats + "/8";
+            drawCentered(batch, font, catsText,
+                playRect.y - 10f, 1.1f, availableCats > 0 ? STATUS_OK : STATUS_KO);
+        }
+
+        float playersTopY = playRect.y - 50f;
         int count = activePlayers.size;
         drawCentered(batch, font, "Jugadores en sala: " + count, playersTopY, 1.4f, DIM);
 
         float listY = playersTopY - 36f;
         for (int i = 0; i < activePlayers.size; i++) {
             String player = activePlayers.get(i);
-            String cat    = game.getWsClient().getActivePlayerCats().get(player);
-            String label  = "• " + player + (cat != null ? " (" + cat + ")" : "");
+            String cat = game.getWsClient().getActivePlayerCats().get(player);
+            String label = "• " + player + (cat != null && !cat.isEmpty() ? " (" + cat + ")" : "");
             Color playerColor = player.equals(game.getPlayerNickname()) ? PRIMARY : PLAYER_COLOR;
             drawCentered(batch, font, label, listY, 1.3f, playerColor);
             listY -= 30f;
@@ -280,7 +294,6 @@ public class MenuScreen extends ScreenAdapter implements WebSocketClient.PlayerL
 
     private void onPlayPressed() {
         if (waitingForJoin) return;
-        if (pickAvailableCat() == null) return;
 
         String nick = nickname.toString().trim();
         if (nick.isEmpty()) {
@@ -293,28 +306,12 @@ public class MenuScreen extends ScreenAdapter implements WebSocketClient.PlayerL
             return;
         }
 
-        // Elegir gato disponible
-        selectedCat = pickAvailableCat();
-        if (selectedCat == null) {
-            Gdx.app.log("MenuScreen", "Sala llena");
-            return;
-        }
-
         lastSentNickname = nick;
         game.setPlayerNickname(nick);
-        game.getWsClient().sendJoin(nick, selectedCat); // ← con gato
+        // Ya no elegimos gato localmente, el servidor lo hará
+        game.getWsClient().sendJoin(nick); // El servidor asigna el gato
         waitingForJoin = true;
         waitingTime = 0f;
-    }
-
-    private String pickAvailableCat() {
-        java.util.Map<String, String> usedCats = game.getWsClient().getActivePlayerCats();
-        java.util.Set<String> usedValues = new java.util.HashSet<>(usedCats.values());
-        String[] allCats = {"cat1","cat2","cat3","cat4","cat5","cat6","cat7","cat8"};
-        for (String cat : allCats) {
-            if (!usedValues.contains(cat)) return cat;
-        }
-        return null;
     }
 
     private void buildLayout() {
